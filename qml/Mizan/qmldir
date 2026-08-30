@@ -1,0 +1,96 @@
+module Mizan
+
+# Design tokens, the module registry and the string catalogue. All singletons:
+# there is exactly one palette, one list of modules and one language per process.
+singleton Tokens 1.0 Tokens.qml
+singleton Destinations 1.0 Destinations.qml
+singleton Strings 1.0 Strings.qml
+
+# Shell.
+NavRail 1.0 NavRail.qml
+NavRailItem 1.0 NavRailItem.qml
+ChromeButton 1.0 ChromeButton.qml
+PageHost 1.0 PageHost.qml
+DialogHost 1.0 DialogHost.qml
+AppDialog 1.0 AppDialog.qml
+ToastHost 1.0 ToastHost.qml
+
+# Page furniture, shared by every list page.
+IconButton 1.0 IconButton.qml
+GlyphButton 1.0 GlyphButton.qml
+PageHeader 1.0 PageHeader.qml
+FilterBar 1.0 FilterBar.qml
+DateField 1.0 DateField.qml
+
+# The section selector inside a record: sales / payments on a customer, invoices /
+# payments on a supplier, the three halves of the product editor. Named SectionBar
+# rather than SelectorBar because FluentControls registers that name too, and a
+# file importing both modules could not then say which one it meant.
+SectionBar 1.0 SectionBar.qml
+
+# Find one product: a field whose matches drop under it, plus a button that lists
+# the whole catalogue. The till had this interaction and the stocktake and the stock
+# ledger needed the same one — so it lives here rather than three times.
+ProductFinder 1.0 ProductFinder.qml
+
+# One delivery line entered whole — quantity, cost, selling price — with the keypad
+# typing straight into whichever figure has focus. A popup rather than a workflow
+# dialog, because it opens from inside one.
+LineEntry 1.0 LineEntry.qml
+
+# Take an amount against something owed, with the keypad and the "left after this"
+# figure that a partial payment has to say out loud. One component, four callers: a
+# till sale, a delivery, a customer account, a supplier account.
+PaymentEntry 1.0 PaymentEntry.qml
+
+# A titled, tinted panel around a group of fields. A caption is a NAME for a group; a
+# panel is a group — an edge, a background and an icon instead of ten grey pixels.
+FormGroup 1.0 FormGroup.qml
+
+# KPI strip. CardRow is the wrapping layout, KpiCard is what goes in it.
+CardRow 1.0 CardRow.qml
+KpiCard 1.0 KpiCard.qml
+
+# Charts. ChartCard is the frame; the three plots are the only three shapes the
+# reports and dashboard screens ask for. Named DonutChart / LineChart / BarsH
+# rather than PieChart / AreaChart / BarChart because QtCharts and QtGraphs
+# register those names, and a file importing both modules could not then say
+# which one it meant — the same collision SectionBar was renamed for above.
+# charts.js gets no entry, for the reason columns.js does not.
+ChartCard 1.0 ChartCard.qml
+DonutChart 1.0 DonutChart.qml
+LineChart 1.0 LineChart.qml
+BarsH 1.0 BarsH.qml
+
+# Data. columns.js gets no entry here: a .pragma library is imported by relative
+# path from the file that uses it, not resolved through the module.
+DataTable 1.0 DataTable.qml
+RowActions 1.0 RowActions.qml
+PaginationBar 1.0 PaginationBar.qml
+
+# The two "nothing to show" layers.
+StateView 1.0 StateView.qml
+LoadingOverlay 1.0 LoadingOverlay.qml
+
+# POS. The till screen is decomposed rather than written as one page: pos.py is
+# ~1450 lines, well past the 800-line ceiling, and most of what is inside it is
+# reusable furniture rather than till logic.
+Numpad 1.0 Numpad.qml
+KeypadDisplay 1.0 KeypadDisplay.qml
+CategoryStrip 1.0 CategoryStrip.qml
+PosTile 1.0 PosTile.qml
+CartLine 1.0 CartLine.qml
+CommandRail 1.0 CommandRail.qml
+TotalsDock 1.0 TotalsDock.qml
+PayButton 1.0 PayButton.qml
+
+# Shared with the purchase screen, which selects a supplier the same way.
+PartyCard 1.0 PartyCard.qml
+
+depends QtQuick
+depends QtQuick.Controls
+depends QtQuick.Layouts
+depends QtQuick.Shapes
+depends QtQuick.Templates
+depends QtQuick.Window
+depends FluentControls

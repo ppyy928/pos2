@@ -1,0 +1,87 @@
+// Copyright (C) 2024 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
+
+import QtQuick
+import QtQuick.Templates as T
+import QtQuick.Controls.impl
+
+T.MenuItem {
+    id: control
+
+    implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
+                            implicitContentWidth + leftPadding + rightPadding)
+    implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
+                             implicitContentHeight + topPadding + bottomPadding,
+                             implicitIndicatorHeight + topPadding + bottomPadding)
+
+    leftPadding: 18
+    rightPadding: 18
+    topPadding: 4
+    bottomPadding: 4
+    spacing: 9
+
+    icon.width: 24
+    icon.height: 24
+    icon.color: control.palette.text
+
+    implicitTextPadding: control.checkable && control.indicator ? control.indicator.width + control.spacing : 0
+
+    contentItem: IconLabel {
+        readonly property real arrowPadding: control.subMenu && control.arrow ? control.arrow.width + control.spacing : 0
+        leftPadding: !control.mirrored ? control.textPadding : arrowPadding
+        rightPadding: control.mirrored ? control.textPadding : arrowPadding
+
+        spacing: control.spacing
+        mirrored: control.mirrored
+        display: control.display
+        alignment: Qt.AlignLeft
+
+        icon: control.icon
+        text: control.text
+        color: control.icon.color
+    }
+
+    arrow: ColorImage {
+        x: control.mirrored ? control.padding : control.width - width - control.padding
+        y: control.topPadding + (control.availableHeight - height) / 2
+        width: 30
+
+        visible: control.subMenu
+        rotation: control.mirrored ? -180 : 0
+        color: control.palette.text
+        source: Qt.resolvedUrl("icons/menuarrow.png")
+        fillMode: Image.Pad
+    }
+
+    indicator: Item {
+        implicitWidth: 21
+        implicitHeight: 15
+
+        x: control.mirrored ? control.width - width - control.rightPadding : control.leftPadding
+        y: control.topPadding + (control.availableHeight - height) / 2
+
+        visible: control.checkable
+
+        ColorImage {
+            y: (parent.height - height) / 2
+            color: control.palette.text
+            source: Qt.resolvedUrl("icons/checkmark.png")
+            visible: control.checkState === Qt.Checked
+                    || (control.checked && control.checkState === undefined)
+        }
+    }
+
+    background: Rectangle {
+        implicitWidth: 300
+        implicitHeight: 45
+        radius: 6
+
+        readonly property real alpha: control.down
+            ? Application.styleHints.colorScheme === Qt.Light ? 0.0241 : 0.0419
+            : control.hovered ? Application.styleHints.colorScheme === Qt.Light ? 0.0373 : 0.0605 : 0
+
+        color: Application.styleHints.colorScheme === Qt.Light ? Qt.rgba(0, 0, 0, alpha) : Qt.rgba(1, 1, 1, alpha)
+        visible: control.down || control.highlighted
+    }
+}
