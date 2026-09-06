@@ -11,14 +11,19 @@ import Mizan
  *   │  Customer owes            12 400.00            │
  *   │  This sale                 3 160.00            │
  *   ├────────────────────────────────────────────────┤
+ *   │  Already paid on this invoice     500.00       │  ┐ only while
+ *   │  Still owed on it               2 660.00       │  │ rewriting a
+ *   │  ⚠ What you enter replaces this figure —       │  │ document
+ *   │    it is not added to it.                      │  ┘
  *   │  RECEIVED                                      │
  *   │  ┌──────────────────────────────────────────┐  │
  *   │  │                                 1 000.00 │  │
  *   │  └──────────────────────────────────────────┘  │
+ *   │  This adds 500.00 to what was paid  500 → 1000 │
  *   │  Left after this            2 160.00           │
  *   ├────────────────────────────────────────────────┤
- *   │  [7][8][9]  [ ALL ]                            │
- *   │  [4][5][6]                                     │
+ *   │  [7][8][9]   [ =  All ]                        │
+ *   │  [4][5][6]   [ ↺  As before ]                  │
  *   │  [1][2][3]                                     │
  *   │  [0][.][⌫]                                     │
  *   │                    [ Cancel ]  [ Confirm ]     │
@@ -47,6 +52,21 @@ import Mizan
  * `facts` is a list of `{ label, value, tone }` drawn above the field. The customer's
  * existing debt belongs there on a till sale and does not exist on a delivery; the
  * component has no business knowing which, so it draws what it is given.
+ *
+ * REWRITING A DOCUMENT THAT WAS ALREADY PART-PAID
+ *
+ * `replaces` turns on the amber band above the field, and it is the difference between
+ * a correction and an accident. pos stores what is entered here as the invoice's TOTAL
+ * paid — `update_sale` says so out loud ("it REPLACES the old paid, it is never added
+ * on top", db.py:2706) and `save_purchase_invoice` does the same with the supplier's
+ * debt. So an operator who sees 500 already paid, types 100 meaning "another hundred",
+ * and presses Confirm has just told the shop the customer paid 100 in total and owes
+ * 400 more than they thought.
+ *
+ * Three things stop that, in the order they are read: the field OPENS on the figure
+ * already recorded (so Confirm alone changes nothing), the band names that figure and
+ * says in words that typing replaces it, and the line under the field spells the change
+ * out as "500.00 → 100.00, this lowers the payment by 400.00" while it is being typed.
  */
 QC.Popup {
     id: sheet
@@ -69,6 +89,14 @@ QC.Popup {
        needs a positive figure says so. */
     property bool allowZero: false
 
+    /* What the document being rewritten has ALREADY been recorded as paid, and whether
+       what is entered here replaces it. Both come from the caller because only it knows
+       it is editing: the till from `pos.editingPaid`, the delivery form from the invoice
+       it loaded. `replaces: false` (a new sale, a new delivery) leaves every extra line
+       below out of the layout entirely. */
+    property real alreadyPaid: 0
+    property bool replaces: false
+
     property string confirmText: ""
 
     signal accepted(real amount)
@@ -76,6 +104,12 @@ QC.Popup {
     function money(value) {
         return (typeof app !== "undefined" && app && app.pos)
                ? app.pos.moneyText(value) : String(value)
+    }
+
+    /* The same number without grouping, for putting back into the field: `moneyText`
+       returns "1 500,00 DA", and parseFloat stops at the space. */
+    function plain(value) {
+        return String(Math.round(value * 100) / 100)
     }
 
     // =====================================================================
@@ -100,10 +134,15 @@ QC.Popup {
     /* Opens empty, not pre-filled with the total. A partial payment is by definition
        not the whole amount, so seeding it with the whole amount would be seeding the
        one answer this dialog is not for — and ALL is one key away for the operator who
-       changes their mind. */
+       changes their mind.
+
+       An edit is the exception: there the figure already recorded is the safe starting
+       point, because what is typed replaces it. Selected, so the first digit still
+       overwrites rather than appends. */
     onOpened: {
-        amount.text = ""
+        amount.text = (replaces && alreadyPaid > 0.005) ? plain(alreadyPaid) : ""
         amount.forceActiveFocus()
+        amount.selectAll()
     }
 
     // =====================================================================
@@ -118,6 +157,16 @@ QC.Popup {
     readonly property real remaining: Math.max(0, due - entered)
     readonly property bool over: entered > due + 0.005
     readonly property bool valid: (allowZero || entered > 0) && !over
+
+    /* What was still owed before anything was typed here — the figure the operator is
+       about to change, worth naming beside the one they are replacing. */
+    readonly property real previousRemaining: Math.max(0, due - alreadyPaid)
+
+    readonly property real delta: entered - alreadyPaid
+    readonly property bool moved: replaces && Math.abs(delta) > 0.005
+    /* Typing less than was already recorded is the direction that costs money: it puts
+       the difference back onto the account as debt. */
+    readonly property bool lowered: moved && delta < 0
 
     function key(value) {
         if (value === "clear") {
@@ -247,6 +296,106 @@ QC.Popup {
             Layout.margins: Tokens.spacing.lg
             spacing: Tokens.spacing.md
 
+            /*
+             * The band that stops the expensive mistake, immediately above the box it is
+             * about.
+             *
+             * Not in the header with the caller's facts: those are context an operator
+             * weighs, and this is a rule about the field itself — read last, one line
+             * before the typing starts. Amber rather than red because nothing has gone
+             * wrong yet; this is the warning that keeps it that way.
+             */
+            Rectangle {
+                Layout.fillWidth: true
+                visible: sheet.replaces
+                implicitHeight: replaceNote.implicitHeight + 2 * Tokens.spacing.sm
+                radius: Tokens.radius.md
+                color: Tokens.warningTint
+                border.width: 1
+                border.color: Qt.rgba(Tokens.warning.r, Tokens.warning.g,
+                                      Tokens.warning.b, 0.28)
+
+                ColumnLayout {
+                    id: replaceNote
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.leftMargin: Tokens.spacing.md
+                    anchors.rightMargin: Tokens.spacing.md
+                    spacing: 2
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Tokens.spacing.sm
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: Strings.t("pay.edit.already_paid",
+                                            "Already paid on this invoice")
+                            elide: Text.ElideRight
+                            font.family: Tokens.font.family
+                            font.pixelSize: Tokens.font.body
+                            color: Fluent.textSecondary
+                        }
+
+                        Text {
+                            text: "\u200e" + sheet.money(sheet.alreadyPaid)
+                            font.family: Tokens.font.family
+                            font.pixelSize: Tokens.font.bodyLarge
+                            font.weight: Font.DemiBold
+                            color: Fluent.textPrimary
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Tokens.spacing.sm
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: Strings.t("pay.edit.still_owed", "Still owed on it")
+                            elide: Text.ElideRight
+                            font.family: Tokens.font.family
+                            font.pixelSize: Tokens.font.body
+                            color: Fluent.textSecondary
+                        }
+
+                        Text {
+                            text: "\u200e" + sheet.money(sheet.previousRemaining)
+                            font.family: Tokens.font.family
+                            font.pixelSize: Tokens.font.bodyLarge
+                            font.weight: Font.DemiBold
+                            color: sheet.previousRemaining > 0.005 ? Tokens.danger
+                                                                   : Tokens.success
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.topMargin: 4
+                        spacing: Tokens.spacing.sm
+
+                        Icon {
+                            Layout.alignment: Qt.AlignTop
+                            icon: "ic_fluent_warning_20_regular"
+                            size: Tokens.icon.sm
+                            color: Tokens.warning
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: Strings.t("pay.edit.replaces",
+                                            "What you enter below replaces this figure — it is not added to it.")
+                            wrapMode: Text.WordWrap
+                            font.family: Tokens.font.family
+                            font.pixelSize: Tokens.font.caption
+                            font.weight: Font.DemiBold
+                            color: Fluent.textPrimary
+                        }
+                    }
+                }
+            }
+
             // -------------------------------------------------------------
             // WHAT IS BEING HANDED OVER
             // -------------------------------------------------------------
@@ -295,6 +444,47 @@ QC.Popup {
                         onAccepted: sheet.commit()
                         onActiveFocusChanged: if (activeFocus) selectAll()
                     }
+                }
+            }
+
+            /*
+             * The change, spelled out while it is being typed.
+             *
+             * "500,00 → 100,00" beside "this lowers the payment by 400,00" is the
+             * sentence the amber band promised, in figures, at the moment the keypad is
+             * still under the operator's hand. Hidden until the number actually differs
+             * from what was recorded, so an unchanged edit says nothing.
+             */
+            RowLayout {
+                Layout.fillWidth: true
+                visible: sheet.moved && !sheet.over
+                spacing: Tokens.spacing.sm
+
+                Text {
+                    Layout.fillWidth: true
+                    text: sheet.lowered
+                          ? Strings.tf("pay.edit.lowered",
+                                       "This lowers the payment by {diff}",
+                                       { diff: sheet.money(-sheet.delta) })
+                          : Strings.tf("pay.edit.raised",
+                                       "This adds {diff} to what was paid",
+                                       { diff: sheet.money(sheet.delta) })
+                    wrapMode: Text.WordWrap
+                    font.family: Tokens.font.family
+                    font.pixelSize: Tokens.font.body
+                    font.weight: Font.DemiBold
+                    color: sheet.lowered ? Tokens.warning : Fluent.textSecondary
+                }
+
+                /* One Text, LTR-marked: mirroring reverses a row of children, and an
+                   arrow between two figures must keep pointing from the old one to the
+                   new one in Arabic as well. */
+                Text {
+                    text: "\u200e" + sheet.money(sheet.alreadyPaid) + "  \u2192  "
+                          + sheet.money(sheet.entered)
+                    font.family: Tokens.font.family
+                    font.pixelSize: Tokens.font.body
+                    color: Fluent.textTertiary
                 }
             }
 
@@ -350,19 +540,48 @@ QC.Popup {
                     onKeyPressed: (value) => sheet.key(value)
                 }
 
-                /* Settling in full is one key away for the operator who changes their
-                   mind at the counter — which happens, and retyping six figures is
-                   where mistakes come from. */
-                PayButton {
+                ColumnLayout {
                     Layout.alignment: Qt.AlignTop
-                    Layout.preferredWidth: 120
-                    compact: true
-                    text: Strings.t("amount.all", "All")
-                    glyph: "ic_fluent_checkmark_circle_20_regular"
-                    hue: Tokens.chromeHue.indigo
-                    onClicked: {
-                        amount.text = String(sheet.due)
-                        amount.forceActiveFocus()
+                    spacing: Tokens.spacing.sm
+
+                    /* Settling in full is one key away for the operator who changes their
+                       mind at the counter — which happens, and retyping six figures is
+                       where mistakes come from.
+
+                       "=" rather than a tick: this key does not confirm anything, it
+                       makes the box equal the amount due, which is what an operator
+                       standing at a keypad reads an equals sign as. The tick that was
+                       here said "done" twice — the Confirm button below already does. */
+                    PayButton {
+                        Layout.preferredWidth: 120
+                        compact: true
+                        text: Strings.t("amount.all", "All")
+                        glyph: "ic_fluent_equal_circle_20_regular"
+                        hue: Tokens.chromeHue.indigo
+                        onClicked: {
+                            amount.text = sheet.plain(sheet.due)
+                            amount.forceActiveFocus()
+                            amount.selectAll()
+                        }
+                    }
+
+                    /* Only while rewriting: the way back to the figure already on the
+                       invoice, for the operator who typed over it and wants no change
+                       after all. Undoing a replacement by retyping it from memory is
+                       exactly the mistake the band above warns about. */
+                    PayButton {
+                        Layout.preferredWidth: 120
+                        visible: sheet.replaces
+                        compact: true
+                        text: Strings.t("pay.as_before", "As before")
+                        glyph: "ic_fluent_arrow_undo_20_regular"
+                        hue: Tokens.chromeHue.slate
+                        onClicked: {
+                            amount.text = sheet.alreadyPaid > 0.005
+                                          ? sheet.plain(sheet.alreadyPaid) : ""
+                            amount.forceActiveFocus()
+                            amount.selectAll()
+                        }
                     }
                 }
             }

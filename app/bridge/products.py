@@ -5,8 +5,11 @@ The contract ProductsPage.qml states, over pos's `fetch_products`:
     read      busy, error, total, stats, categories, rows
     call      load(search, page, pageSize, categoryId), loadCategories(),
               rowAt(index), probeBarcode(code), setFavorite(id, on),
-              setVisibility(id, on), remove(id), quickAdd(...)
-    emits     barcodeProbed(code, exists, matchTotal), invalidated()
+              setVisibility(id, on), remove(id), quickAdd(...),
+              product(id), save(values, id), units(), moneyText(value),
+              adjustStock(...)
+    emits     barcodeProbed(code, exists, matchTotal), invalidated(),
+              created(product), saved(product), adjusted(result), rejected(message)
 
 EVERY CELL IS A STRING
 
@@ -14,6 +17,14 @@ The table's price, cost and stock columns are `numeric: true`, which right-align
 them — it does not format them. Formatting is pos's `fmt_money`/`fmt_qty`, and
 `low_stock` is the comparison already made, so the page can tone a row without
 knowing what a threshold is. That is ProductsPage's own stated requirement.
+
+`product()` IS THE EXCEPTION, AND IT CARRIES BOTH
+
+The form does not display a record, it EDITS one, so every value it is given has
+to be the value it can hand back: the raw number beside the formatted string. A
+pack's `price` and `price_text`, the photo's stored name and its URL. The one
+place this was forgotten cost a pack its price on every save — see
+`product()`.
 
 `rowAt` IS PAGE-RELATIVE
 
@@ -25,7 +36,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
-from . import fmt, interop, legacy
+from .. import diagnostics
+from . import fmt, images, interop, legacy
 
 
 class Products(QObject):
@@ -46,6 +58,9 @@ class Products(QObject):
     saved = Signal("QVariant")
     adjusted = Signal("QVariant")
     rejected = Signal(str)
+    #: A save that finished an imported row: the waiting-room count moved. Carries
+    #: nothing, because the only listener is a counter.
+    draftConsumed = Signal()
 
     def __init__(self, i18n: QObject, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -182,6 +197,11 @@ class Products(QObject):
         cost = float(product.get("purchase_price") or 0.0)
         price = float(product.get("sale_price") or 0.0)
         margin = price - cost
+        # The photo, as the form needs it: the stored name so a save can hand the
+        # same value straight back ("unchanged"), and a URL because that is what
+        # an `Image` loads. Empty for the common case — a product without one.
+        product["image_path"] = product.get("image_path") or ""
+        product["image_url"] = images.url_for(product["image_path"])
         product["text"] = {
             "purchase_price": fmt.money(cost),
             "sale_price": fmt.money(price),
@@ -199,6 +219,12 @@ class Products(QObject):
                 "name": unit["name"],
                 "base_qty": unit["base_qty"],
                 "qty_text": fmt.qty(unit["base_qty"]),
+                # The raw price as well as the formatted one, and this is not
+                # decoration: the form's pack rows are EDITABLE, so they need the
+                # number back. Without it `row.price` was undefined, the box read
+                # "undefined", and saving the product parsed that to 0 — opening a
+                # product with a pack and pressing Save wiped the pack's price.
+                "price": unit["price"],
                 "price_text": fmt.money(unit["price"]),
                 "barcode": unit.get("barcode") or "",
             }
@@ -248,6 +274,34 @@ class Products(QObject):
         if database is None:
             return
 
+        # Is this save finishing an imported row?
+        #
+        # `draft_id` travels only from a form that was opened on one. The four
+        # required fields are checked HERE and not by the form, because the rule is
+        # `db.product_gaps` and there must be one of it: a form that decided for
+        # itself would be a second definition, and the importer already routed the
+        # row by the first.
+        #
+        # A manually added product is deliberately NOT held to this. Somebody typing
+        # a product in is present and deciding — a service with no barcode and no
+        # cost is a real thing to sell. A file is not present and decided nothing,
+        # which is the whole reason the waiting room exists.
+        draft_id = int(values.get("draft_id") or 0)
+        if draft_id:
+            try:
+                database.promote_draft(draft_id, {
+                    "name": name,
+                    "barcode": str(values.get("barcode") or "").strip(),
+                    "purchase_price": interop.as_float(values.get("purchase_price")),
+                    "sale_price": interop.as_float(values.get("sale_price")),
+                })
+            except ValueError as exc:
+                self.rejected.emit(self._gap_reason(str(exc)))
+                return
+            except Exception as exc:  # noqa: BLE001
+                self.rejected.emit(str(exc))
+                return
+
         payload = {
             "name": name,
             "barcode": str(values.get("barcode") or "").strip(),
@@ -261,21 +315,73 @@ class Products(QObject):
                 values.get("low_stock_threshold"), 5.0),
             "show_on_pos": 1 if values.get("show_on_pos", True) else 0,
             "is_favorite": 1 if values.get("is_favorite") else 0,
+            # Default ON: a shop is mostly shelves, so it is the exception that gets
+            # declared. A form that does not send the key leaves the product alone.
+            "track_stock": 1 if values.get("track_stock", True) else 0,
         }
-        # None is a real value here and means "use the shop's rate", which is not
-        # the same as 0 (exempt) — so the key travels only when the form sent it,
-        # and `as_float` is never allowed to turn a null into a zero-rating.
-        if "tax_rate" in values:
-            rate = values.get("tax_rate")
-            payload["tax_rate"] = (None if rate is None or rate == ""
-                                   else interop.as_float(rate))
+        # A draft carried its category and its unit as WORDS, because a file's
+        # spelling is not a foreign key. If the form left both pickers on their
+        # default, those words are resolved now — creating the category or the unit
+        # if the shop has not got one — so a completed draft lands in the category
+        # the file said it was in instead of in none.
+        if draft_id and not payload["category_id"] and not payload["unit_id"]:
+            try:
+                resolved = database.resolve_draft_labels(
+                    str(values.get("category_text") or ""),
+                    str(values.get("unit_text") or ""),
+                )
+            except Exception:  # noqa: BLE001
+                # Not worth refusing a save over: the product is right, it is just
+                # uncategorised, and the operator can put it in a category in the
+                # form they are already looking at.
+                diagnostics.log.debug("could not resolve a draft's labels",
+                                      exc_info=True)
+            else:
+                payload["category_id"] = resolved.get("category_id") or None
+                payload["unit_id"] = resolved.get("unit_id") or None
+        # Which NAMED rate this product is charged at — the rates dialog owns the list,
+        # a product owns a pointer into it. 0 is not a rate: it means "whatever the
+        # shop's default is", and it travels as NULL so a rate that later moves takes
+        # the whole catalogue with it. The key travels only when the form sent it, so a
+        # form that does not ask (quick-add) leaves the product alone.
+        if "tax_id" in values:
+            tax_id = values.get("tax_id")
+            payload["tax_id"] = int(tax_id) if tax_id else None
         if not product_id:
             # Opening quantity, on a create only.
             payload["stock"] = interop.as_float(values.get("stock"))
 
+        # The photo. Three different answers, and the difference matters:
+        #
+        #   a picked file   import it, and point the product at what was stored
+        #   image_clear     this product has no photo any more
+        #   neither         the key never travels, so the product keeps the photo
+        #                   it has — which is what every caller that is not the
+        #                   form (quick-add, a favourite toggle) means.
+        staged = ""
+        picked = images.local_path(values.get("image"))
+        if picked:
+            try:
+                staged = database.store_product_image(picked)
+            except Exception as exc:  # noqa: BLE001
+                # "unsupported image format: .heic", "image file is too large" —
+                # pos's own sentence, which names what to do about it. Refused
+                # before the product is written: a photo the operator chose and
+                # did not get is worth saying out loud rather than saving around.
+                self.rejected.emit(str(exc))
+                return
+            payload["image_path"] = staged
+        elif values.get("image_clear"):
+            payload["image_path"] = ""
+
         try:
             saved = database.save_product(payload, int(product_id) or None)
         except Exception as exc:  # noqa: BLE001
+            if staged:
+                # A file copied a moment ago for a product that was never
+                # written. Nothing points at it, so it goes — and if another
+                # product already had the same picture, the data layer keeps it.
+                database.discard_product_image(staged)
             self.rejected.emit(str(exc))
             return
 
@@ -305,8 +411,34 @@ class Products(QObject):
                 # the difference between a fixable message and a mystery.
                 self.rejected.emit(str(exc))
 
+        # The waiting row goes now that its product exists. Idempotent by design —
+        # `consume_draft` looks for the barcode before it deletes anything — so a
+        # failure here leaves the row in place to be finished again rather than
+        # losing it. See its own comment.
+        if draft_id:
+            try:
+                if database.consume_draft(draft_id, payload["barcode"]):
+                    self.draftConsumed.emit()
+            except Exception:  # noqa: BLE001
+                diagnostics.log.exception("could not clear draft %s", draft_id)
+
         self.saved.emit(dict(saved))
         self.invalidated.emit()
+
+    def _gap_reason(self, message: str) -> str:
+        """`db.promote_draft`'s structured refusal, as the shop's own sentence.
+
+        Duplicated from Drafts._reason on purpose: the alternative is one controller
+        importing the other for a four-line string builder, and the two of them
+        needing each other to exist. The shared thing is the KEY NAMES, and those
+        come from `db.product_gaps`.
+        """
+        if not message.startswith("incomplete:"):
+            return message
+        gaps = [part for part in message.split(":", 1)[1].split(",") if part]
+        names = [self._i18n.text(f"drafts.gap.{key}") for key in gaps]
+        joiner = "، " if getattr(self._i18n, "isRtl", False) else ", "
+        return self._i18n.text("drafts.incomplete_n", fields=joiner.join(names))
 
     @Slot(int, str, float, str)
     def adjustStock(self, product_id: int, mode: str, qty: float,
@@ -329,13 +461,46 @@ class Products(QObject):
     # =====================================================================
     # MUTATIONS
     # =====================================================================
+    #
+    # THESE TWO DO NOT GO THROUGH save_product, AND THAT IS THE POINT
+    #
+    # They used to: `_patch` built `{"name": row["name"], "is_favorite": 1}` and
+    # handed it to `save_product` on the stated understanding that "save_product
+    # only touches the keys it is given". It does not. Only five keys are guarded
+    # by `in data` — tax_id, track_stock, show_on_pos, is_favorite and the photo —
+    # and every other column is assigned unconditionally from a `.get` with a
+    # default. So starring a product from the row menu wrote `barcode = ""`,
+    # `category_id = None`, `purchase_price = 0.0`, `sale_price = 0.0` and
+    # `low_stock_threshold = 5.0` over the real ones: one click, and a priced,
+    # categorised, barcoded product became a free uncategorised one.
+    #
+    # `set_product_favorite` and `set_product_visibility` are the data layer's own
+    # single-column updates — one UPDATE naming one column, and the favourite one
+    # also places the product at the end of the Favourites strip, which the flag
+    # alone would not have done.
     @Slot(int, bool)
     def setFavorite(self, product_id: int, value: bool) -> None:
-        self._patch(product_id, {"is_favorite": 1 if value else 0})
+        database = self._database()
+        if database is None:
+            return
+        try:
+            database.set_product_favorite(int(product_id), bool(value))
+        except Exception as exc:  # noqa: BLE001
+            self.rejected.emit(str(exc))
+            return
+        self.invalidated.emit()
 
     @Slot(int, bool)
     def setVisibility(self, product_id: int, value: bool) -> None:
-        self._patch(product_id, {"show_on_pos": 1 if value else 0})
+        database = self._database()
+        if database is None:
+            return
+        try:
+            database.set_product_visibility(int(product_id), bool(value))
+        except Exception as exc:  # noqa: BLE001
+            self.rejected.emit(str(exc))
+            return
+        self.invalidated.emit()
 
     @Slot(int)
     def remove(self, product_id: int) -> None:
@@ -378,27 +543,11 @@ class Products(QObject):
     # =====================================================================
     # INTERNALS
     # =====================================================================
-    def _patch(self, product_id: int, changes: dict) -> None:
-        """save_product only touches the keys it is given, so a flag can be
-        flipped without loading and rewriting the whole product."""
-        database = self._database()
-        if database is None:
-            return
-        row = next((r for r in self._rows if r["id"] == product_id), None)
-        if row is None:
-            return
-        data = {"name": row["name"], **changes}
-        try:
-            database.save_product(data, int(product_id))
-        except Exception as exc:  # noqa: BLE001
-            self.rejected.emit(str(exc))
-            return
-        self.invalidated.emit()
-
     def _row(self, row: dict) -> dict:
         stock = float(row.get("stock") or 0.0)
         threshold = float(row.get("low_stock_threshold") or 0.0)
         unit = row.get("unit") or ""
+        tracked = bool(row.get("track_stock", 1))
         return {
             "id": row["id"],
             "name": row["name"],
@@ -408,8 +557,16 @@ class Products(QObject):
             "sale_price": fmt.money(row.get("sale_price")),
             # The unit belongs with the number it counts: "12" alone is not an
             # answer to how much is on the shelf.
-            "stock": f"{fmt.qty(stock)} {unit}".strip(),
-            "low_stock": stock <= threshold,
+            #
+            # A product with no shelf shows an infinity sign instead of a figure. Not
+            # "0" and not blank: zero reads as "sold out" — the opposite of the truth —
+            # and an empty cell reads as missing data. The sign says "this one does not
+            # run out", which is exactly what the flag means.
+            "stock": ("\u221e" if not tracked
+                      else f"{fmt.qty(stock)} {unit}".strip()),
+            # Never flagged low, because it never is.
+            "low_stock": tracked and stock <= threshold,
+            "track_stock": tracked,
             "is_favorite": bool(row.get("is_favorite")),
             "show_on_pos": bool(row.get("show_on_pos", True)),
         }
@@ -442,6 +599,19 @@ class Products(QObject):
         self.busyChanged.emit()
 
     def _set_error(self, message: str) -> None:
+        # Logged before the dedup: the same sentence twice is two failures, and
+        # the traceback — still live inside the emitting except block — is what
+        # str(exc) threw away. Two severities, same test as the rejected tap:
+        # a live exception is an ERROR, a bare sentence ("Nothing to print.")
+        # is a refusal the operator can act on and stays DEBUG. An empty
+        # message clears the banner and is not a failure at all.
+        if message:
+            if diagnostics.active_exc():
+                diagnostics.log.error(
+                    "screen error: %s", message, exc_info=True
+                )
+            else:
+                diagnostics.log.debug("screen error: %s", message)
         if self._error == message:
             return
         self._error = message

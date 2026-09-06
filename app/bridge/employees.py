@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
+from .. import diagnostics
 from . import interop, legacy
 
 
@@ -266,6 +267,19 @@ class Employees(QObject):
         self.busyChanged.emit()
 
     def _set_error(self, message: str) -> None:
+        # Logged before the dedup: the same sentence twice is two failures, and
+        # the traceback — still live inside the emitting except block — is what
+        # str(exc) threw away. Two severities, same test as the rejected tap:
+        # a live exception is an ERROR, a bare sentence ("Nothing to print.")
+        # is a refusal the operator can act on and stays DEBUG. An empty
+        # message clears the banner and is not a failure at all.
+        if message:
+            if diagnostics.active_exc():
+                diagnostics.log.error(
+                    "screen error: %s", message, exc_info=True
+                )
+            else:
+                diagnostics.log.debug("screen error: %s", message)
         if self._error == message:
             return
         self._error = message

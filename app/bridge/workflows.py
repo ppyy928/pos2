@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QObject, Signal, Slot
 
+from .. import diagnostics
 from . import interop
 
 
@@ -60,6 +61,11 @@ SPECS: dict[str, Spec] = {
     "stock_ledger": Spec("products.view", "stock.ledger"),
     "products_arrange": Spec("products.manage", "products.arrange.action"),
     "products_import": Spec("products.view", "import.title"),
+    # The waiting room an import leaves behind. `products.view` to look, and the
+    # dialog's own buttons carry `products.manage` — discarding a hundred thousand
+    # rows is not a thing a view-only clerk should be one click from, and finishing
+    # one is a product being created.
+    "products_incomplete": Spec("products.view", "drafts.title"),
     "products_export": Spec("products.view", "reports.export"),
     "barcode_labels": Spec("products.view", "products.hdr.barcode"),
     "categories": Spec("products.view", "categories.title"),
@@ -80,14 +86,30 @@ SPECS: dict[str, Spec] = {
     "return_create": Spec("sales.edit", "return.create_title"),
     "return_details": Spec("sales.view", "return.details_title"),
     # customers
+    #
+    # Two keys, and they are not a details/form pair: `customer_form` is the record
+    # — the balance, the sales, the payments — and `customer_edit` is the form that
+    # corrects the details on it. The record opens the form itself as a child dialog
+    # (DialogHost shows one at a time), so this key is only how the customers page
+    # and the till's picker reach the form when there is no record yet. Hence the
+    # manage right on it: opening a blank form is only useful to someone who may
+    # save it.
     "customer_form": Spec("customers.view", "customers.edit_title"),
+    "customer_edit": Spec("customers.manage", "customers.add"),
     # cash
     "cash_entry": Spec("cash.manage", "nav.cash"),
     # people
     "employee_form": Spec("employees.view", "employees.add"),
+    # The rates a shop charges. Opened from the products page beside categories and
+    # units, because a rate is `products.tax_id` — a thing a product points at — and
+    # gated on `settings.view` because it is still a fiscal decision, which is the
+    # right pos itself uses for its taxes screen.
+    "taxes": Spec("settings.view", "taxes.title"),
     # purchases
     "purchase_form": Spec("purchases.view", "purchases.edit_title"),
     "supplier_form": Spec("purchases.view", "supplier.edit_title"),
+    # The supplier's own details, same split as the customer's.
+    "supplier_edit": Spec("purchases.manage", "suppliers.add"),
 }
 
 
@@ -107,14 +129,21 @@ class Workflows(QObject):
 
     @Slot(str, "QVariant")
     def open(self, key: str, context: object) -> None:
+        # Both refusals are recorded in the business log: a permission denial
+        # is an audit fact (who tried to reach what), and an unknown key is a
+        # build-state message that would otherwise exist only as a toast.
         spec = SPECS.get(key)
         if spec is None:
+            diagnostics.business().warning("workflow unknown: key=%s", key)
             # Not translated, deliberately: a build-state message that goes away
             # when the key lands, not a product string. Same wording the pages
             # use when the router itself is missing.
             self.refused.emit("That screen is not part of this build yet.")
             return
         if spec.permission and not self._session.can(spec.permission):
+            diagnostics.business().info(
+                "workflow refused: key=%s permission=%s", key, spec.permission
+            )
             self.refused.emit(
                 self._i18n.text("permission.denied.body",
                                 target=self._i18n.text(spec.title_key))

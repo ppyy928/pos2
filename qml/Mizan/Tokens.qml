@@ -255,13 +255,17 @@ QtObject {
         readonly property int navCompact:    68
 
         // POS.
-        /* cartRow is 120 because the row carries an inline quantity stepper,
-           which pos does not have: there, changing a quantity means selecting
-           the line and retyping it on the numpad, or opening a dialog. A 48px
-           −/+ pair on the row itself is the single biggest touch win available
-           here, and it sets the height: name line (~28) + gap (6) + stepper
-           row (48) + padding (2×18) = 118, rounded to 120. */
-        readonly property int cartRow:      120
+        /* cartRow carries an inline quantity stepper, which pos does not have:
+           there, changing a quantity means selecting the line and retyping it on
+           the numpad, or opening a dialog. A 48px −/+ pair on the row itself is
+           the single biggest touch win available here, and it sets the floor:
+           name line (23) + gap (2) + stepper (48) + padding (2×6) = 85.
+
+           It was 120, which left 35px of air per row and fitted three lines in the
+           cart's column — a sale of four items had to be scrolled to be read, which
+           is the one list on this screen an operator checks against the goods in
+           front of them. 88 is the content plus a hair, and fits five. */
+        readonly property int cartRow:       88
 
         /* Tile metrics are derived from their own content, not from a multiple
            of pos's 180×110 — that tile was sized around 12px type, and scaling
@@ -276,12 +280,78 @@ QtObject {
                           ----
                           120
 
-           tileMin is a floor, not a fixed width: the grid flows to fill the
-           zone, so a wide screen gets wider tiles rather than a ragged margin.
-           200 keeps "Coca-Cola 1.5L × 6" on two lines at 18px. */
+           tileMin is a floor, not a fixed width, and `tileColumns` is the count the
+           wall aims for: the grid takes the smaller of the two, so a narrow window
+           drops to three or two and a wide one stays at four with the surplus spread
+           between the tiles rather than baked into them.
+
+           168 rather than the 200 this started at. 200 put three tiles across the
+           till's product zone and left the fourth column's worth of space spread as
+           padding inside them — a wall of big cards with fewer products on it, which
+           is the opposite of what a tile wall is for. At 168 a name still gets two
+           lines at 18px (about 15 characters a line, which covers "Coca-Cola 1.5L"
+           and elides the pack size — the tooltip carries the untruncated name). */
         readonly property int tile:         120   // product tile total height
         readonly property int tileName:      52   // two lines of tile name
-        readonly property int tileMin:      200   // narrowest a tile may flow to
+        readonly property int tileMin:      168   // narrowest a tile may flow to
+
+        /*
+         * The wall's column count, and the widest a tile draws.
+         *
+         * WHY THE COUNT IS FIXED AND NOT FLOWED
+         *
+         * It was flowed from `tileMin`, which meant the navigation rail decided it:
+         * collapsing the rail widens the product zone by 240px, so the wall jumped
+         * from four columns to five and every tile in it changed size and position
+         * mid-sale. A cashier's hand learns where a product IS. Reflowing the whole
+         * wall as a side effect of collapsing a menu is the kind of thing that makes
+         * somebody tap the wrong tile.
+         *
+         * So four is the target at any width that can hold four, and the extra room
+         * from a collapsed rail becomes gutter between the tiles instead of a fifth
+         * column. `tileMax` is what caps them: without it, "not reflowing" would
+         * just mean four increasingly enormous cards.
+         *
+         * 192 is what a tile is at the normal layout — the zone at 795px, four
+         * columns, one gap out of each cell — so the cap does nothing until the rail
+         * is collapsed and then holds the tiles exactly where they were.
+         */
+        readonly property int tileColumns:    4
+        readonly property int tileMax:      192
+
+        /* The photo card — the same tile with a picture above it.
+         *
+         *     padding      12
+         *     photo        84   the band, inset by the card's own padding
+         *     gap          12
+         *     name         52
+         *     slack        10   where a one-line name leaves its room
+         *     price        34
+         *     padding      12
+         *                ----
+         *                 216   = tile + tileImage + spacing.sm
+         *
+         * Derived from the compact tile rather than typed as a second number:
+         * everything below the photo IS the compact tile, so a change to the name
+         * or the price line moves both cards and cannot move only one.
+         *
+         * 84 is a deliberate band and not a square, and it came down from 112: a
+         * square photo on a 192px card is 192px tall and pushes the price line off a
+         * 1080p screen at three rows. It is also the honest size for a shop that has
+         * photographed part of its catalogue — the band a product without a photo
+         * shows is empty, and 84 wastes a third less of the card than 112 did while
+         * still reading as a picture frame at about 2:1. */
+        readonly property int tileImage:     84   // the photo band
+        readonly property int tileMedia:    tile + tileImage + 12
+        /* A photo needs more width than a name does before it reads as a photo
+           rather than a stripe. 176 keeps the band at about 2:1 and takes four
+           across the till's product zone, same as the compact card. */
+        readonly property int tileMediaMin: 176
+
+        /* The form's own thumbnail. Square, because that is the shape of the
+           question "which picture is this?" and it sits beside a column of
+           fields whose height it has to match. */
+        readonly property int thumb:        168
 
         readonly property int numpadKey:     72
         readonly property int dock:         180   // totals dock

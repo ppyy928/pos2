@@ -61,9 +61,20 @@ FluentDialog {
     }
 
     /* A margin so a full-width dialog still reads as a dialog rather than as the
-       screen. */
-    readonly property int breathing: 2 * Tokens.spacing.xxl
+       screen.
 
+       Settable, and one dialog does set it: a form long enough to scroll wants
+       every pixel of height it can have, and 32px of air at the top and the
+       bottom of a 1080p screen is a whole field's worth of it. The default is
+       what every short dialog wants; overriding it is a statement that this one
+       is full-screen on purpose. */
+    property int breathing: 2 * Tokens.spacing.xxl
+
+    /* The size, which is the smaller of what the content asked for and what
+       there is. `roomHeight` is readable above for exactly this reason: a form
+       that wants to be as tall as the window cannot say so through
+       `preferredHeight` without being told how tall the window is, and
+       `preferredHeight: roomHeight` is then the whole of that request. */
     width: Math.max(480, Math.min(preferredWidth, roomWidth - breathing))
     height: Math.min(preferredHeight > 0 ? preferredHeight : implicitHeight,
                      roomHeight - breathing)

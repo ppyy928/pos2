@@ -8,14 +8,27 @@ import Mizan
  * Categories — the tabs on the till and the colour of every tile under them.
  * Ported from pos's category management.
  *
- * Deleting one never orphans its products: pos reassigns them first, to the
- * category chosen here or to "Uncategorized" if none is. That is why the product
- * count sits on every row and why the delete confirmation has a destination
- * picker rather than a plain yes.
+ *   ┌ Categories ──────────────────────────────────────┐
+ *   │ ■ Beverages          228 products   ↑ ↓  ✏  🗑  │
+ *   │ ■ Dairy              233 products   ↑ ↓  ✏  🗑  │
+ *   ├──────────────────────────────────────────────────┤
+ *   │ + Add category                            Close  │
+ *   └──────────────────────────────────────────────────┘
  *
- * Order matters as much as the names: it is the order the tabs appear in above the
- * tile grid, and a cashier's hand learns it. So the rows move with two buttons and
- * the new order is written as soon as it changes.
+ * A LIST, AND NOTHING ELSE
+ *
+ * Names and colours are edited in `CategoryFormDialog`, which opens over this one.
+ * What used to be here was an entry row welded to the bottom that was both the add
+ * form and the editor of the selected row, with nothing but a button's word to say
+ * which — so adding a category while a row was selected renamed that category.
+ *
+ * Deleting one never orphans its products: pos reassigns them first, to the category
+ * chosen in the confirmation or to "Uncategorized". That is why the product count
+ * sits on every row and why the confirmation has a destination picker.
+ *
+ * Order matters as much as the names: it is the order of the tabs above the tile
+ * grid, and a cashier's hand learns it. So rows move with two buttons and the new
+ * order is written as soon as it changes.
  */
 AppDialog {
     id: dialog
@@ -24,45 +37,17 @@ AppDialog {
 
     readonly property var ctrl: (typeof app !== "undefined" && app) ? app.catalogue : null
     readonly property int measure: 760
-    readonly property int listHeight: 340
+    readonly property int listHeight: 380
 
     preferredWidth: 1000
     title: Strings.t("categories.title", "Categories")
 
     property var rows: []
-    property int selected: -1
-    readonly property var current: selected >= 0 && selected < rows.length
-                                  ? rows[selected] : null
-
-    /* The token hues, which is where every other colour on this screen comes
-       from — so a category can only be given a colour the rest of the app already
-       knows how to draw on a tile. */
-    readonly property var palette: [
-        Tokens.hue.emerald, Tokens.hue.indigo, Tokens.hue.teal, Tokens.hue.amber,
-        Tokens.hue.crimson, Tokens.hue.violet, Tokens.hue.rose, Tokens.hue.slate
-    ]
-    property string colour: ""
 
     Component.onCompleted: reload()
 
     function reload() {
         rows = ctrl ? ctrl.categories() : []
-        if (selected >= rows.length)
-            selected = -1
-        fill()
-    }
-
-    function fill() {
-        name.text = current ? current.name : ""
-        colour = current ? current.color : ""
-    }
-
-    onSelectedChanged: fill()
-
-    function save() {
-        error.text = ""
-        if (ctrl)
-            ctrl.saveCategory(name.text, colour, current ? current.id : 0)
     }
 
     function move(from, to) {
@@ -73,7 +58,6 @@ AppDialog {
             order.push(rows[i].id)
         var moved = order.splice(from, 1)[0]
         order.splice(to, 0, moved)
-        selected = to
         if (ctrl)
             ctrl.reorderCategories(order)
     }
@@ -82,9 +66,90 @@ AppDialog {
         target: dialog.ctrl
         ignoreUnknownSignals: true
         function onChanged() { dialog.reload() }
-        function onRejected(message) { error.text = message }
+        /* The form reports its own refusals while it is open; this is left with
+           the ones that belong to a reorder or a delete. */
+        function onRejected(message) {
+            if (!form.visible)
+                error.text = message
+        }
     }
 
+    // =====================================================================
+    // THE FORM, AND THE ONE DESTRUCTIVE QUESTION
+    // =====================================================================
+    /* Declared here rather than routed through `workflows`: the form belongs to this
+       list's task, has no permission of its own to check, and takes the row it is
+       editing straight from `edit(row)` instead of a context. DialogHost stacks, so
+       either way it would draw over this list — this is about ownership, not
+       layering. */
+    CategoryFormDialog {
+        id: form
+        onCommitted: error.text = ""
+    }
+
+    /* Where do its products go? That question is the confirmation. */
+    FluentDialog {
+        id: confirmDelete
+
+        property var target: null
+        readonly property int measure: 480
+
+        modal: true
+        title: Strings.t("categories.delete.title", "Delete this category?")
+        standardButtons: QC.Dialog.Yes | QC.Dialog.No
+
+        onAccepted: if (dialog.ctrl && confirmDelete.target)
+                        dialog.ctrl.deleteCategory(
+                            confirmDelete.target.id,
+                            reassign.currentIndex > 0
+                            ? reassign.model[reassign.currentIndex].id : 0)
+
+        contentItem: ColumnLayout {
+            spacing: Tokens.spacing.sm
+
+            Text {
+                Layout.preferredWidth: confirmDelete.measure
+                text: Strings.t("categories.delete.body",
+                                "Its products are moved rather than deleted. Choose where they go.")
+                wrapMode: Text.WordWrap
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.body
+                color: Fluent.textPrimary
+            }
+
+            Text {
+                Layout.preferredWidth: confirmDelete.measure
+                visible: confirmDelete.target !== null
+                text: confirmDelete.target ? confirmDelete.target.name : ""
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.body
+                font.weight: Font.DemiBold
+                color: Fluent.textPrimary
+            }
+
+            QC.ComboBox {
+                id: reassign
+                Layout.fillWidth: true
+                textRole: "name"
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.body
+                model: {
+                    var out = [{ id: 0,
+                                 name: Strings.t("categories.uncategorized",
+                                                 "Uncategorized") }]
+                    var skip = confirmDelete.target ? confirmDelete.target.id : 0
+                    for (var i = 0; i < dialog.rows.length; i++)
+                        if (dialog.rows[i].id !== skip)
+                            out.push(dialog.rows[i])
+                    return out
+                }
+            }
+        }
+    }
+
+    // =====================================================================
+    // LAYOUT
+    // =====================================================================
     contentItem: ColumnLayout {
         spacing: Tokens.spacing.md
 
@@ -115,11 +180,12 @@ AppDialog {
 
                     width: list.width
                     height: Tokens.size.tableRow
-                    color: index === dialog.selected ? Tokens.brandTint
-                         : hover.hovered ? Fluent.subtleSecondary : "transparent"
+                    color: hover.hovered ? Fluent.subtleSecondary : "transparent"
 
                     HoverHandler { id: hover }
-                    TapHandler { onTapped: dialog.selected = row.index }
+                    /* The row opens its own editor — the same gesture as every
+                       table in this app. */
+                    TapHandler { onTapped: form.edit(row.modelData) }
 
                     RowLayout {
                         anchors.fill: parent
@@ -175,12 +241,19 @@ AppDialog {
                         }
 
                         IconButton {
+                            glyph: "ic_fluent_edit_20_regular"
+                            glyphSize: Tokens.icon.sm
+                            tooltip: Strings.t("action.edit", "Edit")
+                            onClicked: form.edit(row.modelData)
+                        }
+
+                        IconButton {
                             glyph: "ic_fluent_delete_20_regular"
                             glyphSize: Tokens.icon.sm
                             glyphColor: Tokens.danger
                             tooltip: Strings.t("action.delete", "Delete")
                             onClicked: {
-                                dialog.selected = row.index
+                                confirmDelete.target = row.modelData
                                 confirmDelete.open()
                             }
                         }
@@ -192,80 +265,16 @@ AppDialog {
                 anchors.fill: parent
                 visible: list.count === 0
                 variant: "empty"
-            }
-        }
-
-        // -----------------------------------------------------------------
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Tokens.spacing.sm
-
-            QC.TextField {
-                id: name
-                Layout.fillWidth: true
-                Layout.preferredHeight: Tokens.size.control
-                placeholderText: Strings.t("categories.name", "Category name")
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                onAccepted: dialog.save()
-            }
-
-            /* Swatches, not a colour picker: eight hues that the tile grid can
-               tell apart, and "none" for letting pos choose. */
-            Row {
-                Layout.alignment: Qt.AlignVCenter
-                spacing: 4
-
-                Repeater {
-                    model: dialog.palette
-
-                    delegate: Rectangle {
-                        required property var modelData
-                        width: 28
-                        height: 28
-                        radius: Tokens.radius.sm
-                        color: modelData
-                        border.width: dialog.colour === String(modelData) ? 3 : 1
-                        border.color: dialog.colour === String(modelData)
-                                      ? Fluent.textPrimary : Fluent.dividerBorder
-
-                        TapHandler { onTapped: dialog.colour = String(modelData) }
-                    }
-                }
-
-                Rectangle {
-                    width: 28
-                    height: 28
-                    radius: Tokens.radius.sm
-                    color: "transparent"
-                    border.width: dialog.colour === "" ? 3 : 1
-                    border.color: dialog.colour === "" ? Fluent.textPrimary
-                                                       : Fluent.dividerBorder
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "—"
-                        font.family: Tokens.font.family
-                        font.pixelSize: Tokens.font.body
-                        color: Fluent.textSecondary
-                    }
-
-                    TapHandler { onTapped: dialog.colour = "" }
-                }
-            }
-
-            GlyphButton {
-                glyph: "ic_fluent_save_20_regular"
-                text: dialog.current ? Strings.t("action.save", "Save")
-                                     : Strings.t("categories.add", "Add")
-                enabled: name.text.trim() !== ""
-                onClicked: dialog.save()
+                title: Strings.t("categories.empty.title", "No categories yet")
+                actionText: Strings.t("categories.add_title", "Add category")
+                onActionRequested: form.edit(null)
             }
         }
 
         Text {
             id: error
             Layout.fillWidth: true
+            Layout.preferredWidth: dialog.measure
             visible: text !== ""
             wrapMode: Text.WordWrap
             font.family: Tokens.font.family
@@ -278,9 +287,10 @@ AppDialog {
             spacing: Tokens.spacing.sm
 
             GlyphButton {
-                visible: dialog.selected >= 0
-                text: Strings.t("categories.new", "New category")
-                onClicked: dialog.selected = -1
+                glyph: "ic_fluent_add_20_regular"
+                text: Strings.t("categories.add_title", "Add category")
+                highlighted: true
+                onClicked: form.edit(null)
             }
 
             Item { Layout.fillWidth: true }
@@ -290,53 +300,6 @@ AppDialog {
                 outlined: true
                 text: Strings.t("action.close", "Close")
                 onClicked: dialog.close()
-            }
-        }
-    }
-
-    /* Where do its products go? That question is the confirmation. */
-    FluentDialog {
-        id: confirmDelete
-        readonly property int measure: 480
-
-        modal: true
-        title: Strings.t("categories.delete.title", "Delete this category?")
-        standardButtons: QC.Dialog.Yes | QC.Dialog.No
-
-        onAccepted: if (dialog.ctrl && dialog.current)
-                        dialog.ctrl.deleteCategory(
-                            dialog.current.id,
-                            reassign.currentIndex > 0
-                            ? reassign.model[reassign.currentIndex].id : 0)
-
-        contentItem: ColumnLayout {
-            spacing: Tokens.spacing.sm
-
-            Text {
-                Layout.preferredWidth: confirmDelete.measure
-                text: Strings.t("categories.delete.body",
-                                "Its products are moved rather than deleted. Choose where they go.")
-                wrapMode: Text.WordWrap
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                color: Fluent.textPrimary
-            }
-
-            QC.ComboBox {
-                id: reassign
-                Layout.fillWidth: true
-                textRole: "name"
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                model: {
-                    var out = [{ id: 0,
-                                 name: Strings.t("categories.uncategorized",
-                                                 "Uncategorized") }]
-                    for (var i = 0; i < dialog.rows.length; i++)
-                        if (!dialog.current || dialog.rows[i].id !== dialog.current.id)
-                            out.push(dialog.rows[i])
-                    return out
-                }
             }
         }
     }

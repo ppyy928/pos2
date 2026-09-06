@@ -37,6 +37,7 @@ from __future__ import annotations
 from PySide6.QtCore import Property, QEvent, QObject, Signal, Slot
 from PySide6.QtGui import QGuiApplication
 
+from .. import diagnostics
 from . import legacy
 
 
@@ -60,7 +61,7 @@ class Scanner(QObject):
             # No decoder means no scanner support, and the till still works: its
             # search box takes a burst the ordinary way, because a scanner ends
             # with Return and that field acts on Return.
-            print(f"bridge: no scanner decoder ({exc})")
+            diagnostics.log.warning("no scanner decoder (%s)", exc)
 
     @Property(bool, notify=installedChanged)
     def installed(self) -> bool:
@@ -166,6 +167,10 @@ class Scanner(QObject):
             text = focus.property("text")
             shown = focus.property("displayText")
         except RuntimeError:
+            # The focus object died between the focus query and the read. DEBUG:
+            # a Qt lifecycle moment that arrives with a deleted C++ pointer, not
+            # a defect — but it belongs in debug.log like every other fallback.
+            diagnostics.log.debug("password probe on a deleted focus object")
             return False
         if not isinstance(text, str) or not isinstance(shown, str):
             return False

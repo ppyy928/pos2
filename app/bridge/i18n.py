@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
+from .. import diagnostics
 from . import legacy
 
 #: Strings this front end needs and pos's catalogue has never heard of.
@@ -125,6 +126,61 @@ EXTRA: dict[str, dict[str, str]] = {
         "ar": "التكلفة والربح يستخدمان سعر الشراء الحالي لكل منتج — "
               "سطر البيع لا يحفظ تكلفته وقت البيع.",
     },
+    # ASKING BEFORE THE SHELF GOES NEGATIVE
+    #
+    # pos only ever reported this afterwards, so its catalogue has the wording for the
+    # report (`negstock.*`) and none for the question. Two titles rather than one: a
+    # shelf at zero and a shelf that is merely short are different news, and only the
+    # first one is usually a surprise. `negstock.mute` is pos's own "Do not show
+    # again" and is reused as it is — the checkbox means the same thing here.
+    "stock.short.out.title": {
+        "en": "Out of stock",
+        "fr": "Rupture de stock",
+        "ar": "نفد المخزون",
+    },
+    "stock.short.title": {
+        "en": "Not enough stock",
+        "fr": "Stock insuffisant",
+        "ar": "المخزون لا يكفي",
+    },
+    "stock.short.out.body": {
+        "en": "{name} has nothing left on the shelf. It can still be sold — the "
+              "count simply goes below zero.",
+        "fr": "{name} n'a plus rien en rayon. La vente reste possible — le compte "
+              "passe simplement sous zéro.",
+        "ar": "{name} لم يبق منه شيء في الرفّ. البيع ما زال ممكناً — لكن العدد "
+              "سينزل تحت الصفر.",
+    },
+    "stock.short.body": {
+        "en": "{name} does not have enough on the shelf for this line. It can "
+              "still be sold — the count simply goes below zero.",
+        "fr": "{name} n'a pas assez de stock pour cette ligne. La vente reste "
+              "possible — le compte passe simplement sous zéro.",
+        "ar": "{name} لا يوجد منه ما يكفي هذا السطر. البيع ما زال ممكناً — لكن "
+              "العدد سينزل تحت الصفر.",
+    },
+    "stock.short.wanted": {
+        "en": "This line wants",
+        "fr": "Cette ligne demande",
+        "ar": "هذا السطر يطلب",
+    },
+    "stock.short.sell": {
+        "en": "Sell it anyway",
+        "fr": "Vendre quand même",
+        "ar": "بِعْه على أي حال",
+    },
+    "stock.short.add": {
+        "en": "Add stock",
+        "fr": "Ajouter du stock",
+        "ar": "إضافة كمية",
+    },
+    # The same switch, on the Settings screen — the way back for a shop that muted
+    # the question from the dialog and then wanted it again.
+    "settings.pos.warn_stock": {
+        "en": "Ask before selling more than the shelf holds",
+        "fr": "Demander avant de vendre plus que le stock",
+        "ar": "السؤال قبل بيع أكثر من الموجود في المخزون",
+    },
 }
 
 
@@ -140,7 +196,7 @@ class I18n(QObject):
         except ImportError as exc:
             # Reported, not swallowed: QML falls back to the English text passed
             # to every t() call, so the UI stays legible and this says why.
-            print(f"bridge: no string catalogue ({exc})")
+            diagnostics.log.warning("no string catalogue (%s)", exc)
             self._table = {}
             self._languages, self._rtl = ("en",), ()
 
@@ -160,13 +216,6 @@ class I18n(QObject):
     def isRtl(self) -> bool:
         return self._language in self._rtl
 
-    @Property("QVariantList", constant=True)
-    def availableLanguages(self) -> list:
-        """For a selector that should not hardcode the list. LoginPage still
-        hardcodes ["en", "fr", "ar"] to match its own Segmented labels; this is
-        here so the next one does not have to."""
-        return list(self._languages)
-
     # -- what QML calls ---------------------------------------------------
     @Slot(str)
     def setLanguage(self, code: str) -> None:
@@ -182,7 +231,7 @@ class I18n(QObject):
         try:
             legacy.language_manager().set_language(code)
         except Exception as exc:  # noqa: BLE001
-            print(f"bridge: could not set the legacy language ({exc})")
+            diagnostics.log.warning("could not set the legacy language (%s)", exc)
 
         self.languageChanged.emit()
 

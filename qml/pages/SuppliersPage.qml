@@ -89,7 +89,12 @@ Item {
      */
     readonly property var rowActions: [
         { id: "edit" },
-        { id: "pay", enabled: function (row) { return root.canManage && row.owes } }
+        { id: "pay", enabled: function (row) { return root.canManage && row.owes } },
+        /* The bin is only ever offered on an EMPTY record. `deletable` is decided by
+           the query that filled this list — no invoice, no payment, nothing owed — so
+           a supplier with history shows a dimmed icon rather than a refusal the
+           operator has to press to discover. */
+        { id: "delete", enabled: function (row) { return root.canManage && row.deletable } }
     ]
 
     function reload() {
@@ -112,6 +117,11 @@ Item {
         else if (action === "pay")
             requestOpen("supplier_form", { supplier_id: data.id,
                                            section: "payments" })
+        else if (action === "delete") {
+            confirmDelete.supplierId = data.id
+            confirmDelete.supplierName = data.name
+            confirmDelete.open()
+        }
     }
 
     function requestOpen(key, context) {
@@ -174,16 +184,15 @@ Item {
                                    "Who the shop buys from, and what is still owed to them.")
 
             actionItems: [
-                /* The same record screen with nothing in it, rather than the list-
-                   plus-form manager this button used to open: adding a supplier from
-                   the suppliers page should not put a second copy of the suppliers
-                   list on top of it. */
+                /* The details form on its own: a supplier who does not exist yet
+                   has no balance and no deliveries, so there is no record to draw
+                   around it. */
                 GlyphButton {
                     glyph: "ic_fluent_add_20_regular"
                     text: Strings.t("suppliers.add", "New supplier")
                     highlighted: true
                     enabled: root.canManage
-                    onClicked: root.requestOpen("supplier_form", {})
+                    onClicked: root.requestOpen("supplier_edit", {})
                 }
             ]
         }
@@ -255,6 +264,46 @@ Item {
 
             LoadingOverlay {
                 visible: root.busy && root.total === 0
+            }
+        }
+    }
+
+    /* Only ever an empty record, so the confirmation is short and names it: what it
+       guards against is the wrong row, not a lost history. */
+    FluentDialog {
+        id: confirmDelete
+
+        property int supplierId: -1
+        property string supplierName: ""
+        readonly property int measure: 460
+
+        modal: true
+        title: Strings.t("suppliers.delete.title", "Delete this supplier?")
+        standardButtons: QC.Dialog.Yes | QC.Dialog.No
+
+        onAccepted: if (root.ctrl) root.ctrl.remove(confirmDelete.supplierId)
+
+        contentItem: Column {
+            spacing: Tokens.spacing.sm
+
+            Text {
+                width: confirmDelete.measure
+                text: Strings.t("suppliers.delete.body",
+                                "Nothing has been bought from or paid to this supplier, so nothing is lost with it.")
+                wrapMode: Text.WordWrap
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.body
+                color: Fluent.textPrimary
+            }
+
+            Text {
+                width: confirmDelete.measure
+                text: confirmDelete.supplierName
+                wrapMode: Text.WordWrap
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.body
+                font.weight: Font.DemiBold
+                color: Fluent.textPrimary
             }
         }
     }

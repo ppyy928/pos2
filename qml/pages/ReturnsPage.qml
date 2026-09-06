@@ -268,22 +268,17 @@ Item {
         contentItem: Column {
             spacing: Tokens.spacing.sm
 
+            /* The catalogue names the return and states both reversals, so this is `tf`
+               — read through `t` the operator saw a literal "{number}" above the number
+               on the line below. */
             Text {
                 width: confirmDelete.measure
-                text: Strings.t("returns.delete.body",
-                                "The stock it put back is removed again, and a credit sale's refund goes back onto the customer's debt.")
+                text: Strings.tf("returns.delete.body",
+                                 "Delete return {number}? Restored stock and any customer-debt adjustment will be reversed.",
+                                 { number: confirmDelete.number })
                 wrapMode: Text.WordWrap
                 font.family: Tokens.font.family
                 font.pixelSize: Tokens.font.body
-                color: Fluent.textPrimary
-            }
-
-            Text {
-                width: confirmDelete.measure
-                text: "\u200e" + confirmDelete.number
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                font.weight: Font.DemiBold
                 color: Fluent.textPrimary
             }
         }

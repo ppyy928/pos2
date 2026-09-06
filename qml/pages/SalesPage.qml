@@ -142,12 +142,18 @@ Item {
      * Gated on `sales.edit`, because rewriting a completed sale moves stock and a
      * customer's debt. `Sales.save` refuses one that has already been returned
      * against, so the pen may be pressed on any row and the refusal explains itself.
+     *
+     * `delete` is the same right and the same reasoning one step further: an invoice
+     * that should never have existed — a double ring-up, a test sale — is removed and
+     * everything it did is undone. It asks first, with the figures, because the money
+     * comes out of the drawer and the debt comes off an account.
      */
     readonly property var rowActions: [
         { id: "view" },
         { id: "edit", enabled: root.canEdit },
         { id: "print" },
-        { id: "return", enabled: root.canReturn }
+        { id: "return", enabled: root.canReturn },
+        { id: "delete", enabled: root.canEdit }
     ]
 
     // =====================================================================
@@ -184,10 +190,22 @@ Item {
             return
         if (action === "view")
             requestOpen("sale_transaction", { sale_id: data.id })
-        else if (action === "edit" && pos) {
+        else if (action === "edit") {
             /* Load first, THEN navigate: loadSale refuses a cart that is not empty,
                and being thrown onto the till with the previous cart still on it and a
-               refusal toast behind the page is the one outcome to avoid. */
+               refusal toast behind the page is the one outcome to avoid.
+
+               Every way this can fail has to say so. A pen that does nothing at all
+               is indistinguishable from a broken build, and this one could do exactly
+               that twice over: with no till bridge the branch was skipped in silence,
+               and a refusal from `loadSale` was emitted on `pos.rejected`, which this
+               page was not listening to (see the Connections below). */
+            if (!pos) {
+                notify(Strings.t("workflow.not_ready",
+                                 "That screen is not part of this build yet."),
+                       Severity.info)
+                return
+            }
             if (pos.loadSale(data.id))
                 Destinations.request("pos")
         }
@@ -197,6 +215,28 @@ Item {
             /* A reprint is the commonest request at a counter: the customer wants
                the slip, or the first one came out blank. */
             ctrl.printReceipt(data.id)
+        else if (action === "delete")
+            askDelete(data.id)
+    }
+
+    /*
+     * The delete question, asked with the figures rather than with "are you sure".
+     *
+     * `deleteImpact` is a read: it comes back with the lines, the total, what leaves
+     * the drawer and what comes off the customer's account, and whether a return
+     * blocks the whole thing. So the dialog states the consequence before the operator
+     * commits to it, and a blocked sale says why instead of accepting the press and
+     * answering with a toast.
+     */
+    function askDelete(saleId) {
+        if (!ctrl)
+            return
+        var impact = ctrl.deleteImpact(saleId)
+        if (!impact)
+            return
+        confirmDelete.saleId = saleId
+        confirmDelete.impact = impact
+        confirmDelete.open()
     }
 
     function requestOpen(key, context) {
@@ -235,6 +275,91 @@ Item {
             root.notify(Strings.t("sales.printed", "Sent to the printer"),
                         Severity.success)
         }
+
+        function onDeleted(number) {
+            root.notify(Strings.tf("sales.deleted", "Sale {number} deleted",
+                                   { number: number }),
+                        Severity.success)
+        }
+
+        function onRejected(message) {
+            root.notify(message, Severity.caution)
+        }
+    }
+
+    /*
+     * What deleting an invoice costs, in the invoice's own figures.
+     *
+     * Two of the four rows are conditional and that is the point: a cash sale takes
+     * money out of the drawer and touches nobody's account, a debt sale is the reverse.
+     * A "0,00" row for the half that does not apply would make the operator read
+     * arithmetic instead of a consequence, so an empty value drops the row —
+     * ConfirmDialog does that itself.
+     */
+    ConfirmDialog {
+        id: confirmDelete
+
+        property int saleId: 0
+        property var impact: null
+
+        readonly property bool blocked: impact && impact.returns > 0
+
+        title: Strings.t("sales.delete.title", "Delete this sale?")
+
+        body: impact
+              ? Strings.tf("sales.delete.body",
+                           "{number} is removed and everything it did is undone: the lines go back on the shelf, the payment leaves the drawer, and what was owed comes off the account.",
+                           { number: impact.number })
+              : ""
+
+        blocker: blocked
+                 ? Strings.t("sales.delete_returned",
+                             "This sale has a return against it. Delete the return first.")
+                 : ""
+
+        facts: impact ? [
+            {
+                label: Strings.t("pos.summary.items", "Items"),
+                value: impact.lines + " \u00b7 " + impact.units,
+                tone: ""
+            },
+            {
+                label: Strings.t("sales.col.total", "Total"),
+                value: impact.total,
+                tone: ""
+            },
+            {
+                label: Strings.t("sales.delete.from_drawer", "Out of the drawer"),
+                value: impact.paid_value > 0 ? impact.paid : "",
+                tone: "warning"
+            },
+            {
+                label: impact.customer !== ""
+                       ? Strings.tf("sales.delete.off_account", "Off {name}'s account",
+                                    { name: impact.customer })
+                       : Strings.t("sales.col.due", "Outstanding"),
+                value: impact.debt_value > 0 ? impact.debt : "",
+                tone: "danger"
+            }
+        ] : []
+
+        confirmText: Strings.t("sales.delete.action", "Delete the sale")
+
+        onConfirmed: if (root.ctrl) root.ctrl.remove(confirmDelete.saleId)
+    }
+
+    /*
+     * The till refuses out loud, on whichever page asked it to.
+     *
+     * The pen loads a sale INTO the till, so the refusal — "finish or void the current
+     * cart first", "that sale no longer exists" — is emitted by `app.pos`, not by the
+     * sales controller. Without this the operator pressed the pen with a cart already
+     * open and got nothing whatsoever: the sentence existed and was thrown on the
+     * floor because nothing on this page was listening for it.
+     */
+    Connections {
+        target: root.pos
+        ignoreUnknownSignals: true
 
         function onRejected(message) {
             root.notify(message, Severity.caution)

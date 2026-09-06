@@ -22,6 +22,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
+from .. import diagnostics
 from . import fmt, interop, legacy, reportsql
 from . import reportview as rv
 
@@ -100,6 +101,13 @@ SPEC: dict[str, dict] = {
         "options": [("light", "settings.theme.light"),
                     ("dark", "settings.theme.dark")],
     },
+    # Photos on the till's product cards. A switch and not a choice because the
+    # third state — "photos exist but the shop wants the density" — is what OFF
+    # already means, and because a catalogue with no photos gets the compact card
+    # either way: see Till.imageCards.
+    "ui.product_images": {"group": "appearance", "kind": "flag",
+                          "key": "settings.ui.product_images",
+                          "text": "Show product photos on the till"},
     # -- selling ----------------------------------------------------------
     "sale.allow_debt": {"group": "sale", "kind": "flag",
                         "key": "settings.sale.allow_debt",
@@ -107,6 +115,14 @@ SPEC: dict[str, dict] = {
     "sale.allow_partial": {"group": "sale", "kind": "flag",
                            "key": "settings.sale.allow_partial",
                            "text": "Allow partial payment"},
+    # The till's shelf question — see Till.warnStock. This key is NOT in pos's
+    # DEFAULT_SETTINGS: it is this front end's own, which is why it carries a
+    # `default` here and why `load` below looks at this table as well as at pos's.
+    # It has to be reachable from Settings because the dialog it belongs to offers to
+    # turn itself off, and a switch with no way back is a trap.
+    "pos.warn_stock": {"group": "sale", "kind": "flag",
+                       "key": "settings.pos.warn_stock", "default": "1",
+                       "text": "Ask before selling more than the shelf holds"},
     # -- receipts ---------------------------------------------------------
     "receipt.printer": {"group": "receipt", "kind": "text",
                         "key": "settings.receipt.printer", "text": "Printer"},
@@ -158,6 +174,16 @@ SPEC: dict[str, dict] = {
     "barcode.label_height": {"group": "barcode", "kind": "number",
                              "key": "settings.barcode.height",
                              "text": "Label height (mm)"},
+    "barcode.format": {
+        "group": "barcode", "kind": "choice",
+        "key": "settings.barcode.format", "text": "Label design",
+        # The two designs the engine draws. A free number or a typed key here is
+        # a shelf of stickers in whichever layout the fallback picked, so it is a
+        # choice — and the label sheet writes the same setting, from the screen
+        # where the picture is.
+        "options": [("classic_side", "barcode.tpl.classic_side"),
+                    ("bottom_price", "barcode.tpl.bottom_price")],
+    },
     "barcode.show_store": {"group": "barcode", "kind": "flag",
                            "key": "settings.barcode.show_store",
                            "text": "Print the shop name"},
@@ -218,7 +244,14 @@ class Settings(QObject):
         defaults = dict(getattr(database, "DEFAULT_SETTINGS", {}))
         buckets: dict[str, list] = {name: [] for name, _key, _text in GROUPS}
 
-        for key in defaults:
+        # pos's keys first, in its own order, then any key this front end owns that
+        # pos has never heard of. Same shape as i18n's EXTRA: the borrowed table is
+        # the authority for everything it defines, and this side may add — a setting
+        # that only pos2 has a screen for would otherwise be unreachable, because
+        # this loop used to be driven by DEFAULT_SETTINGS alone.
+        keys = list(defaults) + [key for key in SPEC if key not in defaults]
+
+        for key in keys:
             spec = SPEC.get(key)
             if spec is None:
                 # A key pos added that this table has not been taught. Shown as
@@ -227,7 +260,9 @@ class Settings(QObject):
                 spec = {"group": GROUPS[-1][0], "kind": "text",
                         "key": "", "text": key}
             try:
-                raw = database.get_setting(key, defaults[key])
+                raw = database.get_setting(key,
+                                          defaults.get(key,
+                                                       spec.get("default", "")))
             except Exception as exc:  # noqa: BLE001
                 self.rejected.emit(str(exc))
                 return
@@ -309,7 +344,7 @@ class Settings(QObject):
                 if manager is not None:
                     manager.setTheme(value)
             except Exception as exc:  # noqa: BLE001
-                print(f"bridge: could not switch the theme ({exc})")
+                diagnostics.log.warning("could not switch the theme (%s)", exc)
 
     def _database(self):
         try:
@@ -602,9 +637,7 @@ class Dashboard(QObject):
                 "total": fmt.money(sum(row["value"] for row in mix)),
             }
         except Exception as exc:  # noqa: BLE001
-            import sys
-
-            print(f"bridge: dashboard charts unavailable ({exc})", file=sys.stderr)
+            diagnostics.log.warning("dashboard charts unavailable (%s)", exc)
             self._series = {"trend": [], "mix": [], "ranking": [],
                             "range": "", "total": ""}
 
@@ -907,6 +940,7 @@ class Reports(QObject):
         try:
             return Path(legacy.database().DATA_DIR)
         except Exception:  # noqa: BLE001
+            diagnostics.log.debug("DATA_DIR unreadable; exporting home", exc_info=True)
             return Path.home()
 
     def _table(self, table_id: str) -> dict | None:

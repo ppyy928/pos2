@@ -6,7 +6,7 @@ import Mizan
 
 /*
  * One supplier: what the shop owes them, the deliveries behind it, what has been
- * paid — and the two fields that can be changed, in the same screen.
+ * paid.
  *
  * The customer screen with the sign reversed, deliberately down to the layout: a
  * supplier account behaves the way a customer account does, and an operator who
@@ -14,16 +14,15 @@ import Mizan
  * first section lists (invoices in, not sales out) and where its action goes (the
  * purchase form, not the till).
  *
- * WHY THIS REPLACED `supplier_details`
+ * A RECORD, NOT A FORM
  *
- * There used to be a read-only supplier panel behind an eye icon, and no way to
- * correct a supplier's name from it at all — that lived in the separate suppliers
- * manager, a list-plus-form dialog reached from another screen entirely. So a
- * misspelled supplier meant closing the record, opening a manager, finding the row
- * again and retyping it. The record is now the one place, and the eye column is
- * gone from the suppliers table.
+ * The details used to be editable in place here, shown or hidden by a flag — so
+ * pressing Edit hid the balance that was the reason for pressing it, and the footer's
+ * Save meant nothing the rest of the time. They live in `SupplierEditDialog` now,
+ * which opens over this record; the suppliers page opens it directly when there is
+ * no record yet.
  *
- * WHY PAYING IS IN THE PAYMENTS SECTION
+ * WHY PAYING IS STILL IN THE PAYMENTS SECTION
  *
  * It is the reason this screen gets opened: the rep is at the counter with an
  * invoice, and the two things needed are the balance and a box to type into. Both
@@ -41,20 +40,30 @@ AppDialog {
     readonly property var session: (typeof app !== "undefined" && app) ? app.session : null
     readonly property var workflows: (typeof app !== "undefined" && app)
                                      ? app.workflows : null
+    /* The lists on this record hold documents other screens own: a delivery note is
+       opened by the purchase workflow and printed by the printer, a payment is deleted
+       by the payments register. This record asks them; it owns neither. */
+    readonly property var printer: (typeof app !== "undefined" && app)
+                                   ? app.printing : null
+    readonly property var paymentsCtrl: (typeof app !== "undefined" && app)
+                                        ? app.payments : null
+    /* Deliveries are written by the purchase form, which this record opens over
+       itself: the invoice list and the four figures at the top are what change when
+       it saves. */
+    readonly property var purchasesCtrl: (typeof app !== "undefined" && app)
+                                         ? app.purchases : null
 
     readonly property int supplierId: context && context.supplier_id
                                       ? context.supplier_id : 0
-    readonly property bool creating: supplierId === 0
 
     readonly property bool canManage: session ? session.can("purchases.manage") : true
 
-    preferredWidth: creating ? 700 : 1240
-    preferredHeight: creating ? 0 : 900
+    preferredWidth: 1240
+    preferredHeight: 900
 
-    title: creating ? Strings.t("suppliers.add", "New supplier")
-                    : (row.name !== undefined && row.name
-                       ? row.name
-                       : Strings.t("supplier.edit_title", "Edit supplier"))
+    /* The generic word, not the name — the name is the record's own first line, at
+       title size. Same reasoning as the customer record. */
+    title: Strings.t("suppliers.record_title", "Supplier")
 
     // =====================================================================
     // STATE
@@ -68,7 +77,6 @@ AppDialog {
     readonly property real debt: row.debt !== undefined ? row.debt : 0
     readonly property bool owes: debt > 0
 
-    property bool editingInfo: creating
     property bool paying: false
 
     property string invoicesQuery: ""
@@ -80,15 +88,18 @@ AppDialog {
 
     readonly property int measure: 560
 
+    /* Whether this record can go: the same three conditions `delete_supplier`
+       enforces — no delivery, no payment, nothing owed — read off the payload already
+       on screen. Same reasoning as the customer record. */
+    readonly property bool deletable: supplierId > 0 && invoices.length === 0
+                                      && payments.length === 0 && !(debt > 0.005)
+
     // =====================================================================
     // DATA
     // =====================================================================
     Component.onCompleted: {
         reload()
-        fill()
-        if (creating) {
-            name.forceActiveFocus()
-        } else if (context && context.section) {
+        if (context && context.section) {
             sectionBar.select(context.section)
             if (context.section === "payments" && canManage && owes)
                 openPayment()
@@ -100,39 +111,58 @@ AppDialog {
             row = ctrl.supplier(supplierId) || ({})
     }
 
-    function fill() {
-        name.text = row.name !== undefined ? row.name : ""
-        phone.text = row.phone !== undefined ? row.phone : ""
-        contact.text = row.contact !== undefined ? row.contact : ""
-        wilaya.text = row.wilaya !== undefined ? row.wilaya : ""
-        address.text = row.address !== undefined ? row.address : ""
-        email.text = row.email !== undefined ? row.email : ""
-        taxId.text = row.tax_id !== undefined ? row.tax_id : ""
-        tradeId.text = row.trade_id !== undefined ? row.trade_id : ""
-        error.text = ""
-    }
-
-    function saveInfo() {
-        error.text = ""
-        if (ctrl)
-            ctrl.save(name.text, phone.text, supplierId, {
-                contact: contact.text,
-                wilaya: wilaya.text,
-                address: address.text,
-                email: email.text,
-                tax_id: taxId.text,
-                trade_id: tradeId.text
-            })
-    }
-
-    function cancelInfo() {
-        fill()
-        editingInfo = false
-    }
-
     function openPayment() {
         paying = true
         amount.forceActiveFocus()
+    }
+
+    // -- the two lists' row actions ---------------------------------------
+    /*
+     * A row here is a document, handed to whoever owns it. Each of these says
+     * something when it cannot act: an icon that answers a press with silence cannot
+     * be told apart from a broken one.
+     */
+    function invoiceAt(row) {
+        return (row >= 0 && row < invoiceRows.length) ? invoiceRows[row] : null
+    }
+
+    function paymentAt(row) {
+        return (row >= 0 && row < paymentRows.length) ? paymentRows[row] : null
+    }
+
+    function openInvoice(row) {
+        var invoice = invoiceAt(row)
+        if (!invoice)
+            return
+        if (!workflows || !workflows.open) {
+            error.text = Strings.t("workflow.not_ready",
+                                   "That screen is not part of this build yet.")
+            return
+        }
+        workflows.open("purchase_form", { invoice_id: invoice.id })
+    }
+
+    function printInvoice(row) {
+        var invoice = invoiceAt(row)
+        if (!invoice)
+            return
+        if (!printer) {
+            error.text = Strings.t("workflow.not_ready",
+                                   "That screen is not part of this build yet.")
+            return
+        }
+        printer.printPurchase(invoice.id)
+        notice = Strings.t("sales.printed", "Sent to the printer")
+    }
+
+    function askDeletePayment(row) {
+        var payment = paymentAt(row)
+        if (!payment || !canManage)
+            return
+        confirmDeletePayment.paymentId = payment.id
+        confirmDeletePayment.amount = payment.amount_text
+        confirmDeletePayment.when = payment.when
+        confirmDeletePayment.open()
     }
 
     // -- money ------------------------------------------------------------
@@ -238,6 +268,16 @@ AppDialog {
             width: 200,
             ltr: true,
             tone: function (r) { return r.owes ? "danger" : "" }
+        },
+        /* A delivery note is a record with an editor, so the pen opens it — there is
+           no separate read-only view of the same thing. Print is what the rep asks
+           for at the counter. */
+        {
+            key: "actions",
+            actions: [
+                { id: "edit", enabled: dialog.canManage },
+                { id: "print" }
+            ]
         }
     ]
 
@@ -255,6 +295,14 @@ AppDialog {
             width: 260,
             ltr: true,
             tone: "success"
+        },
+        /* No pen: a payment is not edited, because a corrected receipt is a different
+           receipt. It is deleted — which puts the balance back — and taken again. */
+        {
+            key: "actions",
+            actions: [
+                { id: "delete", enabled: dialog.canManage }
+            ]
         }
     ]
 
@@ -265,15 +313,10 @@ AppDialog {
         target: dialog.ctrl
         ignoreUnknownSignals: true
 
+        /* The editor closes itself on a save; this is the record catching up. */
         function onSaved(supplier) {
-            if (dialog.creating) {
-                dialog.close()
-                return
-            }
-            dialog.editingInfo = false
             dialog.notice = Strings.t("customers.info_saved", "Details saved.")
             dialog.reload()
-            dialog.fill()
         }
 
         function onPaid(result) {
@@ -289,6 +332,33 @@ AppDialog {
 
         function onRejected(message) {
             error.text = message
+        }
+    }
+
+    /* The payments register refuses out loud, on whichever screen asked it to: this
+       record can now delete a payment, so it has to be able to hear "no". */
+    Connections {
+        target: dialog.paymentsCtrl
+        ignoreUnknownSignals: true
+
+        function onRejected(message) {
+            error.text = message
+        }
+
+        /* A deleted payment moves this supplier's balance, and the figures at the top
+           of this record are the reason it is open. */
+        function onInvalidated() {
+            dialog.reload()
+        }
+    }
+
+    /* A delivery saved in the form above this one. */
+    Connections {
+        target: dialog.purchasesCtrl
+        ignoreUnknownSignals: true
+
+        function onInvalidated() {
+            dialog.reload()
         }
     }
 
@@ -332,7 +402,6 @@ AppDialog {
 
                 Text {
                     Layout.fillWidth: true
-                    visible: !dialog.editingInfo
                     text: dialog.row.name !== undefined && dialog.row.name
                           ? dialog.row.name : "—"
                     wrapMode: Text.WordWrap
@@ -343,7 +412,7 @@ AppDialog {
                 }
 
                 Text {
-                    visible: !dialog.editingInfo && text !== ""
+                    visible: text !== ""
                     text: dialog.row.phone !== undefined && dialog.row.phone
                           ? "\u200e" + dialog.row.phone : ""
                     font.family: Tokens.font.family
@@ -351,12 +420,11 @@ AppDialog {
                     color: Fluent.textSecondary
                 }
 
-                /* The rep and the wilaya, read-only: the two that decide who to
-                   call and how long a delivery takes. The postal and tax detail is
-                   only read while writing paperwork, so it stays in the editor. */
+                /* The rep and the wilaya: the two that decide who to call and how
+                   long a delivery takes. The postal and tax detail is only read
+                   while writing paperwork, so it stays in the editor. */
                 RowLayout {
                     Layout.fillWidth: true
-                    visible: !dialog.editingInfo
                     spacing: Tokens.spacing.md
 
                     Text {
@@ -377,165 +445,43 @@ AppDialog {
 
                     Item { Layout.fillWidth: true }
                 }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    visible: dialog.editingInfo
-                    spacing: Tokens.spacing.md
-
-                    Field {
-                        label: Strings.t("supplier.name", "Supplier name")
-                        required: true
-
-                        QC.TextField {
-                            id: name
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Tokens.size.control
-                            enabled: dialog.canManage
-                            font.family: Tokens.font.family
-                            font.pixelSize: Tokens.font.bodyLarge
-                            onAccepted: dialog.saveInfo()
-                        }
-                    }
-
-                    Field {
-                        Layout.maximumWidth: 300
-                        label: Strings.t("supplier.phone", "Phone")
-
-                        QC.TextField {
-                            id: phone
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Tokens.size.control
-                            enabled: dialog.canManage
-                            inputMethodHints: Qt.ImhDialableCharactersOnly
-                            font.family: Tokens.font.family
-                            font.pixelSize: Tokens.font.body
-                            horizontalAlignment: TextInput.AlignLeft
-                            onAccepted: dialog.saveInfo()
-                        }
-                    }
-                }
-
-                /*
-                 * Who to actually call, and where they are.
-                 *
-                 * A supplier is reached through a person: the rep's name is what
-                 * gets a delivery moved, and it is the thing a shop writes on the
-                 * wall next to the phone. The wilaya decides who delivers when and
-                 * how long a replacement takes, which is why it sits with the
-                 * contact rather than with the postal detail below.
-                 */
-                RowLayout {
-                    Layout.fillWidth: true
-                    visible: dialog.editingInfo
-                    spacing: Tokens.spacing.md
-
-                    Field {
-                        label: Strings.t("party.contact", "Rep")
-
-                        QC.TextField {
-                            id: contact
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Tokens.size.control
-                            enabled: dialog.canManage
-                            font.family: Tokens.font.family
-                            font.pixelSize: Tokens.font.body
-                        }
-                    }
-
-                    Field {
-                        Layout.maximumWidth: 220
-                        label: Strings.t("party.wilaya", "Wilaya")
-
-                        QC.TextField {
-                            id: wilaya
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Tokens.size.control
-                            enabled: dialog.canManage
-                            font.family: Tokens.font.family
-                            font.pixelSize: Tokens.font.body
-                        }
-                    }
-
-                    Field {
-                        label: Strings.t("party.address", "Address")
-
-                        QC.TextField {
-                            id: address
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Tokens.size.control
-                            enabled: dialog.canManage
-                            font.family: Tokens.font.family
-                            font.pixelSize: Tokens.font.body
-                        }
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    visible: dialog.editingInfo
-                    spacing: Tokens.spacing.md
-
-                    Field {
-                        Layout.maximumWidth: 300
-                        label: Strings.t("party.email", "Email")
-
-                        QC.TextField {
-                            id: email
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Tokens.size.control
-                            enabled: dialog.canManage
-                            inputMethodHints: Qt.ImhEmailCharactersOnly
-                            horizontalAlignment: TextInput.AlignLeft
-                            font.family: Tokens.font.family
-                            font.pixelSize: Tokens.font.body
-                        }
-                    }
-
-                    Field {
-                        Layout.maximumWidth: 220
-                        label: Strings.t("party.tax_id", "NIF")
-
-                        QC.TextField {
-                            id: taxId
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Tokens.size.control
-                            enabled: dialog.canManage
-                            horizontalAlignment: TextInput.AlignLeft
-                            font.family: Tokens.font.family
-                            font.pixelSize: Tokens.font.body
-                        }
-                    }
-
-                    Field {
-                        Layout.maximumWidth: 220
-                        label: Strings.t("party.trade_id", "RC")
-
-                        QC.TextField {
-                            id: tradeId
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Tokens.size.control
-                            enabled: dialog.canManage
-                            horizontalAlignment: TextInput.AlignLeft
-                            font.family: Tokens.font.family
-                            font.pixelSize: Tokens.font.body
-                        }
-                    }
-
-                    Item { Layout.fillWidth: true }
-                }
             }
 
-            GlyphButton {
+            /* What can be done to the record itself. The sections below own the
+               errands — enter a delivery, pay the rep — because each acts on a row in
+               the list under it; these two act on the supplier. */
+            ColumnLayout {
                 Layout.alignment: Qt.AlignBottom
-                visible: !dialog.creating && !dialog.editingInfo
-                glyph: "ic_fluent_edit_20_regular"
-                text: Strings.t("action.edit_info", "Edit info")
-                enabled: dialog.canManage
-                onClicked: {
-                    dialog.editingInfo = true
-                    dialog.notice = ""
-                    name.forceActiveFocus()
+                spacing: Tokens.spacing.xs
+
+                GlyphButton {
+                    Layout.fillWidth: true
+                    glyph: "ic_fluent_edit_20_regular"
+                    text: Strings.t("action.edit_details", "Edit details")
+                    enabled: dialog.canManage
+                    onClicked: {
+                        dialog.notice = ""
+                        editor.edit(dialog.row)
+                    }
+                }
+
+                /* Dark until the record is empty: `delete_supplier` allows only a
+                   supplier with no delivery, no payment and nothing owed, and the
+                   tooltip says so rather than a refusal after the press. */
+                GlyphButton {
+                    Layout.fillWidth: true
+                    glyph: "ic_fluent_delete_20_regular"
+                    text: Strings.t("action.delete", "Delete")
+                    enabled: dialog.canManage && dialog.deletable
+                    icon.color: enabled ? Tokens.danger : Fluent.textDisabled
+                    tooltip: dialog.deletable
+                             ? ""
+                             : Strings.t("suppliers.delete.refused",
+                                         "This supplier has deliveries, payments or a balance — the record stays so those documents keep the name on them.")
+                    onClicked: {
+                        dialog.notice = ""
+                        confirmDelete.open()
+                    }
                 }
             }
         }
@@ -545,7 +491,6 @@ AppDialog {
         // -----------------------------------------------------------------
         CardRow {
             Layout.fillWidth: true
-            visible: !dialog.creating
             minCardWidth: 230
 
             KpiCard {
@@ -602,7 +547,6 @@ AppDialog {
         SectionBar {
             id: sectionBar
             Layout.fillWidth: true
-            visible: !dialog.creating
 
             sections: [
                 {
@@ -628,7 +572,6 @@ AppDialog {
         StackLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: !dialog.creating
             currentIndex: sectionBar.currentIndex
 
             // -- invoices -------------------------------------------------
@@ -659,10 +602,14 @@ AppDialog {
                         highlighted: true
                         enabled: dialog.canManage
                         onClicked: {
+                            /* The delivery form opens OVER this record and the record
+                               stays: a new invoice for this supplier is read against
+                               what they have already delivered, which is the list
+                               underneath. The Connections on `purchasesCtrl` bring the
+                               figures up to date when it is saved. */
                             if (dialog.workflows)
                                 dialog.workflows.open("purchase_form",
                                                       { supplier_id: dialog.supplierId })
-                            dialog.close()
                         }
                     }
                 }
@@ -677,6 +624,15 @@ AppDialog {
                                ? Strings.t("state.no_results.title", "No matches")
                                : Strings.t("supplier.no_invoices",
                                            "Nothing has been bought from this supplier yet.")
+                    /* Double-click opens the note, the same gesture every other table
+                       in this app answers to. */
+                    onRowActivated: (row) => dialog.openInvoice(row)
+                    onActionTriggered: (row, action) => {
+                        if (action === "edit")
+                            dialog.openInvoice(row)
+                        else if (action === "print")
+                            dialog.printInvoice(row)
+                    }
                 }
             }
 
@@ -734,13 +690,10 @@ AppDialog {
                                 Layout.fillWidth: true
                                 spacing: Tokens.spacing.xs
 
-                                QC.TextField {
+                                NumberField {
                                     id: amount
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: Tokens.size.control
-                                    inputMethodHints: Qt.ImhFormattedNumbersOnly
-                                    font.family: Tokens.font.family
-                                    font.pixelSize: Tokens.font.bodyLarge
                                     onAccepted: dialog.pay()
                                 }
 
@@ -811,6 +764,10 @@ AppDialog {
                                ? Strings.t("state.no_results.title", "No matches")
                                : Strings.t("supplier.no_payments",
                                            "Nothing has been paid to this supplier.")
+                    onActionTriggered: (row, action) => {
+                        if (action === "delete")
+                            dialog.askDeletePayment(row)
+                    }
                 }
             }
         }
@@ -848,23 +805,99 @@ AppDialog {
             GlyphButton {
                 glyph: "ic_fluent_dismiss_20_regular"
                 outlined: true
-                text: dialog.editingInfo ? Strings.t("action.cancel", "Cancel")
-                                         : Strings.t("action.close", "Close")
-                onClicked: {
-                    if (dialog.creating || !dialog.editingInfo)
-                        dialog.close()
-                    else
-                        dialog.cancelInfo()
-                }
+                text: Strings.t("action.close", "Close")
+                onClicked: dialog.close()
+            }
+        }
+    }
+
+    // =====================================================================
+    // THE DETAILS, IN A FORM OF THEIR OWN
+    // =====================================================================
+    SupplierEditDialog {
+        id: editor
+        onCommitted: error.text = ""
+    }
+
+    /* Deleting the record itself. Only reachable while `deletable`, so this states
+       what goes rather than arguing about whether it may. */
+    ConfirmDialog {
+        id: confirmDelete
+
+        title: Strings.t("suppliers.delete.title", "Delete this supplier?")
+        body: Strings.t("suppliers.delete.body",
+                        "Nothing is recorded against this supplier, so nothing is lost with it.")
+
+        facts: [
+            {
+                label: Strings.t("supplier.name", "Supplier name"),
+                value: dialog.row.name !== undefined ? dialog.row.name : "",
+                tone: ""
+            },
+            {
+                label: Strings.t("supplier.phone", "Phone"),
+                value: dialog.row.phone !== undefined ? dialog.row.phone : "",
+                tone: ""
+            }
+        ]
+
+        confirmText: Strings.t("suppliers.delete.action", "Delete the supplier")
+
+        onConfirmed: {
+            if (dialog.ctrl)
+                dialog.ctrl.remove(dialog.supplierId)
+            dialog.close()
+        }
+    }
+
+    /* Deleting a payment is not a tidy-up: what it settled goes back on the balance.
+       So the confirmation names the amount and the date — the same sentence the
+       payments register uses, because it is the same act on the same record. */
+    FluentDialog {
+        id: confirmDeletePayment
+
+        property int paymentId: -1
+        property string amount: ""
+        property string when: ""
+        readonly property int measure: 460
+
+        modal: true
+        title: Strings.t("payments.delete.title", "Delete this payment?")
+        standardButtons: QC.Dialog.Yes | QC.Dialog.No
+
+        onAccepted: {
+            if (!dialog.paymentsCtrl) {
+                error.text = Strings.t("workflow.not_ready",
+                                       "That screen is not part of this build yet.")
+                return
+            }
+            /* `kind` tells the register which table the id belongs to: supplier and
+               customer payments number themselves independently. */
+            dialog.paymentsCtrl.remove(confirmDeletePayment.paymentId, "supplier")
+            dialog.reload()
+        }
+
+        contentItem: Column {
+            spacing: Tokens.spacing.sm
+
+            Text {
+                width: confirmDeletePayment.measure
+                text: Strings.t("payments.delete.body",
+                                "The amount is added back to the debt it settled.")
+                wrapMode: Text.WordWrap
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.body
+                color: Fluent.textPrimary
             }
 
-            GlyphButton {
-                visible: dialog.editingInfo
-                glyph: "ic_fluent_save_20_regular"
-                text: Strings.t("action.save", "Save")
-                highlighted: true
-                enabled: dialog.canManage && name.text.trim() !== ""
-                onClicked: dialog.saveInfo()
+            Text {
+                width: confirmDeletePayment.measure
+                text: confirmDeletePayment.when + "  ·  \u200e" + confirmDeletePayment.amount
+                wrapMode: Text.WordWrap
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.body
+                font.weight: Font.DemiBold
+                color: Fluent.textPrimary
             }
         }
     }

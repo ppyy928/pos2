@@ -39,6 +39,20 @@ import Mizan
  * something", teal is "this only looks". A red glyph over black text says half of
  * it. Disabled drops back to the style's own ink, so an unavailable command reads
  * as unavailable rather than as a quiet colour.
+ *
+ * WHY THE CARD IS TINTED AND THE TILE IS SOLID
+ *
+ * It was a white card with a hairline divider border and a pale tile: on a white
+ * page that is three shades of nearly-white, and at a counter — glanced at, from
+ * standing height, under shop lighting — the column read as a grey list again, which
+ * is the exact failure the card was introduced to fix. So the card now carries the
+ * tone's tint, its border carries the tone itself, and the glyph tile is FILLED with
+ * the tone with a light glyph on it. Each command is a coloured chip: findable by
+ * colour and silhouette before a word of it is read, which is the whole point of not
+ * using five grey buttons.
+ *
+ * Hover lifts the tint rather than replacing it, so the card that is about to be
+ * pressed is the same object slightly brighter, not a different one.
  */
 Item {
     id: rail
@@ -89,6 +103,12 @@ Item {
                                            : tone !== "" ? Tokens.toneInk(tone)
                                                          : Fluent.textPrimary
 
+                /* The card's own fill, from the same tone. Held here rather than
+                   inside the background so hover and down can step off it. */
+                readonly property color fill: !enabled ? "transparent"
+                                            : tone !== "" ? Tokens.toneFill(tone)
+                                                          : Fluent.subtleSecondary
+
                 Layout.fillWidth: true
                 Layout.preferredHeight: rail.cardHeight
 
@@ -107,16 +127,21 @@ Item {
 
                 background: Rectangle {
                     radius: Tokens.radius.md
+                    /* The tone's tint, not the card colour: on a white page a white
+                       card with a hairline border is invisible from standing height.
+                       Down and hover step it up rather than swapping it out. */
                     color: !command.enabled ? "transparent"
-                         : command.down ? Fluent.subtleTertiary
-                         : command.hovered ? Fluent.subtleSecondary
-                                           : Fluent.cardBackground
+                         : command.down ? Qt.darker(command.fill, 1.06)
+                         : command.hovered ? Qt.lighter(command.fill, 1.04)
+                                           : command.fill
                     Behavior on color { ColorAnimation { duration: Fluent.anim.appearance } }
 
-                    border.width: 1
+                    /* The tone owns the edge too. 1px of the real colour at rest
+                       (not a divider grey), thicker on hover, so the card that is
+                       about to be pressed is unmistakable without moving. */
+                    border.width: command.hovered && command.enabled ? 2 : 1
                     border.color: !command.enabled ? Fluent.dividerBorder
-                                : command.hovered ? command.ink
-                                                  : Fluent.dividerBorder
+                                                   : command.ink
                 }
 
                 /* Padding on the control, once, rather than margins on each half:
@@ -133,17 +158,16 @@ Item {
                 contentItem: RowLayout {
                     spacing: Tokens.spacing.sm
 
-                    /* The glyph on a tint of its own tone — the gallery's shape,
-                       and the same one the dashboard cards and the KPI cards use.
-                       A Row mirrors, so it stays on the leading edge in Arabic. */
+                    /* The glyph tile, FILLED with the tone and carrying a light
+                       glyph: the one solid block of colour on the card, which is
+                       what gives each command its silhouette across a counter. A
+                       Row mirrors, so it stays on the leading edge in Arabic. */
                     Rectangle {
                         Layout.alignment: Qt.AlignVCenter
                         implicitWidth: Tokens.icon.lg + Tokens.spacing.md
                         implicitHeight: implicitWidth
                         radius: Tokens.radius.sm
-                        color: command.enabled && command.tone !== ""
-                               ? Tokens.toneFill(command.tone)
-                               : Fluent.subtleSecondary
+                        color: command.enabled ? command.ink : Fluent.subtleSecondary
 
                         Icon {
                             anchors.centerIn: parent
@@ -152,7 +176,11 @@ Item {
                             icon: command.modelData.glyph !== undefined
                                   ? command.modelData.glyph : ""
                             size: Tokens.icon.md
-                            color: command.ink
+                            /* On a filled tile the glyph cannot be the tone as
+                               well. `onBrand` is the palette's answer to "ink on a
+                               saturated fill" and follows the theme. */
+                            color: command.enabled ? Tokens.onBrand
+                                                   : Fluent.textDisabled
                         }
                     }
 

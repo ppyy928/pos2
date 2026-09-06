@@ -56,10 +56,20 @@ import Mizan
  *             saleFinished(number), rejected(message)
  *
  * A `tiles` row is {id, name, price_text, stock, stock_text, low_stock, color,
- * barcode} â€” pos's fetch_pos_products row with the price already formatted and
- * the low-stock comparison already made. A `lines` row is {name, qty, qty_text,
+ * barcode, image} â€” pos's fetch_pos_products row with the price already formatted,
+ * the low-stock comparison already made and the photo already resolved to a URL
+ * ("" for a product without one). A `lines` row is {name, qty, qty_text,
  * price_text, total_text, step}. Both are read through the same `rowData` idiom
  * DataTable uses, so either a JS array or a role-based model works.
+ *
+ * WHICH CARD THE GRID DRAWS
+ *
+ * `ctrl.imageCards` decides it, for every card at once, and this page does not
+ * second-guess it: a GridView has one cellHeight, so a grid where each card chose
+ * for itself would clip the tall ones and strand the short ones. Both metrics that
+ * follow from the choice â€” the cell height and the width a column may flow to â€”
+ * come from that one flag, and PosTile measures itself from the same two tokens.
+ * See PosTile's header for what the two cards are and why there are two.
  *
  * THE TWO QUESTIONS ASKED OF A TYPED STRING
  *
@@ -120,6 +130,12 @@ Item {
     readonly property var session: (typeof app !== "undefined" && app) ? app.session : null
     readonly property var workflows: (typeof app !== "undefined" && app) ? app.workflows : null
 
+    /* The customer list the cart's dropdown chooses from — the accounts
+       controller, not the till: the till holds the ONE customer attached to this
+       sale and knows nothing about the other three thousand. */
+    readonly property var customers: (typeof app !== "undefined" && app)
+                                     ? app.customers : null
+
     // =====================================================================
     // VIEW STATE â€” everything pos keeps on the page that is not money
     // =====================================================================
@@ -171,11 +187,43 @@ Item {
                                        && session.revision >= 0
                                        && session.can("products.manage")
 
+    /* The permission the picker dialog was routed behind. Attaching a customer means
+       reading the customer list, and moving that list from a routed dialog onto the
+       till must not hand it to somebody the router would have refused — the defaults
+       give every till role customers.view, but the permissions are per employee and
+       an admin can take it away. Dimmed rather than hidden: a card that vanishes
+       moves the cart up by 64px for one operator and not another.
+
+       `session.revision` first, for canArrange's reason: can() is a slot, so a
+       binding that only calls it never re-evaluates. */
+    readonly property bool canPickCustomer: session
+                                            && session.revision >= 0
+                                            && session.can("customers.view")
+
+    /* Whether the shelf question may offer to fix the shelf. Same right the
+       `stock_adjust` workflow is routed behind, asked here so the button is absent
+       for a cashier rather than present and answered with a refusal. It is the same
+       expression as `canArrange` and deliberately not an alias of it: they are two
+       different questions that happen to share a permission today, and one of them
+       moving would silently move the other. */
+    readonly property bool canAdjustStock: session
+                                           && session.revision >= 0
+                                           && session.can("products.manage")
+
     /* Counted off the views rather than the controller: it is the same number,
        and asking the thing that is on screen cannot disagree with what is on
        screen. */
     readonly property int cartCount: cartView.count
     readonly property int tileCount: tileGrid.count
+
+    /* Do the cards carry a photo?
+     *
+     * The controller's answer, for the whole grid at once: the shop's
+     * `ui.product_images` switch AND at least one photo in the catalogue. One
+     * flag for every card in the grid, because a GridView has one cell size —
+     * see PosTile's own header. A product with no photo of its own still gets a
+     * photo card here, with the placeholder in it. */
+    readonly property bool imageCards: ctrl ? ctrl.imageCards === true : false
 
     /* Matches for the dropdown. Not tiles: this list can contain products the tile
        wall never shows, because a search means the whole catalogue. */
@@ -468,13 +516,19 @@ Item {
         ctrl.setQty(row, value)
     }
 
-    function askRemove(row) {
-        if (row < 0 || row >= cartCount)
+    /*
+     * Taking a line off the cart happens on the tap, with nothing asked.
+     *
+     * It used to open a confirmation. That was the wrong measure of the act: a cart
+     * line is not a document, and putting it back is one scan of the same product —
+     * the till's most practised gesture. A dialog in front of it costs a tap and a
+     * read every single time to prevent a mistake that costs a scan once. Voiding the
+     * whole sale still asks, because that one is not a scan to undo.
+     */
+    function removeLine(row) {
+        if (row < 0 || row >= cartCount || !ctrl)
             return
-        var line = cartView.itemAtIndex(row)
-        confirmRemove.row = row
-        confirmRemove.lineName = line ? line.name : ""
-        confirmRemove.open()
+        ctrl.remove(row)
     }
 
     function requireCart() {
@@ -551,11 +605,26 @@ Item {
     // =====================================================================
     // CUSTOMER
     // =====================================================================
+    /* Loaded whole, once, each time the dropdown opens: `search("")` is unpaged, so
+       every keystroke after that is filtered in QML with no round trip. The paged
+       load belongs to CustomersPage, which is a table with a pager; this is a list
+       being typed into. */
+    function loadCustomers() {
+        if (customers)
+            customers.search("")
+    }
+
+    function attachCustomer(party) {
+        if (!ctrl || !party)
+            return
+        ctrl.setCustomer(party.id)
+    }
+
     function removeCustomer() {
         if (!ctrl)
             return
         /* Nothing is committed until Confirm, so dropping the customer while the
-           panel is up needs no confirmation of its own â€” it just closes it. pos
+           panel is up needs no confirmation of its own — it just closes it. pos
            asks, because there the panel is where the debt is decided and it
            stays open. */
         dismiss()
@@ -696,6 +765,15 @@ Item {
             belowZero.open()
         }
 
+        /* The shelf cannot cover what was just asked for, and nothing has been added
+           yet. Unlike the report above this is a question, because it arrives while
+           there is still a decision to make: sell it anyway, put some stock on the
+           shelf, or drop it. See Till's own note on why it asks rather than refuses. */
+        function onStockBlocked(info) {
+            shortStock.info = info
+            shortStock.open()
+        }
+
         /* The controller refused something and said why: an empty cart, a partial
            without a customer, a failed write. Its sentence, not ours. */
         function onRejected(message) {
@@ -718,7 +796,9 @@ Item {
        that print them: a Shortcut declared inside the rail or a payment hero
        would keep firing while a dialog is on top of it. */
     Shortcut { sequence: "F2"; onActivated: filters.focusSearch() }
-    Shortcut { sequence: "F3"; onActivated: root.requestOpen("customer_select", {}) }
+    /* F3 drops the customer list open with its search focused, which is the same
+       keystroke it always was and one dialog less than it used to be. */
+    Shortcut { sequence: "F3"; onActivated: customerSelect.open() }
     Shortcut { sequence: "F4"; onActivated: root.command("calculator") }
     Shortcut { sequence: "F1"; onActivated: root.command("return") }
     Shortcut { sequence: "F5"; onActivated: root.command("hold") }
@@ -738,7 +818,7 @@ Item {
     Shortcut {
         sequence: "Delete"
         enabled: !root.typing
-        onActivated: root.askRemove(root.targetRow)
+        onActivated: root.removeLine(root.targetRow)
     }
 
     /* Escape closes the panel, then clears the buffer, then does nothing. It is
@@ -828,15 +908,23 @@ Item {
                                    matches eighty products, or a name the operator
                                    only half remembers and wants to scroll for.
 
-                                   A list glyph, not a magnifier: the field beside it
-                                   is already the search, so a second magnifier said
-                                   "search" twice and never said what this one does,
-                                   which is *browse*. The same icon opens the same
-                                   list on the stocktake and the stock ledger, so one
-                                   shape means one thing everywhere. */
+                                   Not a magnifier: the field beside it is already
+                                   the search, so a second magnifier said "search"
+                                   twice and never said what this one does.
+
+                                   And not the bullet list this used to be either.
+                                   That drew what is on the other side of the press
+                                   — a list — and left the press itself unexplained,
+                                   which on a screen where every other icon acts in
+                                   place read as "switch this area to a list view".
+                                   `open` is a frame with an arrow leaving its
+                                   corner: the one shape a desktop operator already
+                                   reads as "a window opens". The same glyph is on
+                                   ProductFinder's browse button, so one shape still
+                                   means one thing everywhere. */
                                 IconButton {
                                     anchors.verticalCenter: parent.verticalCenter
-                                    glyph: "ic_fluent_apps_list_20_regular"
+                                    glyph: "ic_fluent_open_20_regular"
                                     glyphSize: Tokens.icon.md
                                     tooltip: Strings.t("selector.open_picker",
                                                        "Browse all products")
@@ -897,35 +985,56 @@ Item {
                                 visible: !root.showTileState
                                 model: root.ctrl ? root.ctrl.tiles : null
 
-                                /* The grid flows: a wider screen gets more
-                                   columns, and the surplus is spread across the
-                                   tiles rather than left as a ragged margin.
-                                   tileMin is the floor a tile may shrink to, so
-                                   this is the largest column count that keeps
-                                   every tile at or above it â€” pos pins itself to
-                                   four columns and shrinks the tiles instead,
-                                   which wastes a 1920px screen. */
+                                /* The wall aims for `tileColumns` and never exceeds
+                                   it: the count is FIXED at any width that can hold
+                                   it, so collapsing the navigation rail — which
+                                   widens this zone by 240px — spreads the surplus
+                                   between the tiles instead of adding a fifth column
+                                   and moving every product on screen. A cashier's
+                                   hand learns where a product is; the rail is not
+                                   allowed to reshuffle the wall.
+
+                                   The floor still wins on a narrow window: four
+                                   columns of 120px would be unreadable, so there the
+                                   count drops to what `tileFloor` allows.
+
+                                   A photo card is taller and wants more width before
+                                   the band reads as a picture rather than a stripe,
+                                   so both metrics come from the same flag — cell
+                                   height and the floor a column may flow to. Cards
+                                   and cells cannot then disagree: PosTile takes its
+                                   own implicit size from the same two tokens. */
                                 readonly property int gap: Tokens.spacing.sm
+                                readonly property int tileFloor:
+                                    root.imageCards ? Tokens.size.tileMediaMin
+                                                    : Tokens.size.tileMin
                                 readonly property int columns:
-                                    Math.max(1, Math.floor((width + gap)
-                                                           / (Tokens.size.tileMin + gap)))
+                                    Math.max(1, Math.min(
+                                        Tokens.size.tileColumns,
+                                        Math.floor((width + gap)
+                                                   / (tileFloor + gap))))
 
                                 cellWidth: Math.max(1, Math.floor(width / columns))
-                                cellHeight: Tokens.size.tile + gap
+                                cellHeight: (root.imageCards
+                                             ? Tokens.size.tileMedia
+                                             : Tokens.size.tile) + gap
 
                                 QC.ScrollBar.vertical: FluentScrollBar {
                                     policy: QC.ScrollBar.AsNeeded
                                 }
 
-                                /* A cell, with the tile inset inside it. GridView
-                                   has no spacing of its own â€” the gutter has to
-                                   come out of the cell, and an even inset on all
-                                   four sides is the one version of that which
-                                   needs no mirroring. */
+                                /* A cell, with the tile centred inside it. GridView
+                                   has no spacing of its own — the gutter has to come
+                                   out of the cell — and the tile is capped at
+                                   `tileMax`, so a cell wider than a tile shows the
+                                   difference as gutter on both sides rather than as
+                                   one enormous card. Centring is also what keeps that
+                                   gutter even without needing to be mirrored. */
                                 delegate: Item {
                                     id: cell
                                     width: tileGrid.cellWidth
                                     height: tileGrid.cellHeight
+
 
                                     /* `modelData` is what a plain JS array or a
                                        role-less model provides; `model` is what a
@@ -938,8 +1047,10 @@ Item {
                                         ? modelData : model
 
                                     PosTile {
-                                        anchors.fill: parent
-                                        anchors.margins: Math.round(tileGrid.gap / 2)
+                                        anchors.centerIn: parent
+                                        width: Math.min(parent.width - tileGrid.gap,
+                                                        Tokens.size.tileMax)
+                                        height: parent.height - tileGrid.gap
 
                                         name: cell.rowData ? cell.rowData.name : ""
                                         priceText: cell.rowData ? cell.rowData.price_text : ""
@@ -956,6 +1067,14 @@ Item {
                                            thing colour was meant to fix. */
                                         accent: cell.rowData && cell.rowData.color
                                                 ? cell.rowData.color : "transparent"
+
+                                        /* The grid decides whether there is a
+                                           photo band; the row decides what is in
+                                           it. "" is a product with no photo, and
+                                           the card draws the placeholder. */
+                                        showImage: root.imageCards
+                                        imageSource: cell.rowData && cell.rowData.image
+                                                     ? cell.rowData.image : ""
 
                                         onClicked: root.pick(cell.rowData)
                                     }
@@ -1136,8 +1255,11 @@ Item {
                 anchors.margins: Tokens.size.cardPadding
                 spacing: Tokens.spacing.sm
 
-                PartyCard {
+                PartySelect {
+                    id: customerSelect
+
                     Layout.fillWidth: true
+                    enabled: root.canPickCustomer
                     active: root.hasCustomer
                     title: root.hasCustomer && root.ctrl
                            ? root.ctrl.customerName
@@ -1147,8 +1269,21 @@ Item {
                               : Strings.t("pos.customer.hint",
                                           "Tap to attach a customer")
                     removeTip: Strings.t("pos.customer.remove", "Remove customer")
-                    onClicked: root.requestOpen("customer_select", {})
+
+                    rows: root.customers ? root.customers.rows : []
+                    placeholder: Strings.t("select_customer.search.ph",
+                                           "Search name or phone")
+
+                    /* The way out when the name is not in the list. It opens the
+                       picker dialog, which is where quick-add lives — the dropdown
+                       does not grow a second form of its own, and the dialog
+                       attaches the new customer itself. */
+                    newLabel: Strings.t("qcustomer.title", "Quick Add Customer")
+
+                    onListRequested: root.loadCustomers()
+                    onPicked: (party) => root.attachCustomer(party)
                     onRemoveRequested: root.removeCustomer()
+                    onNewRequested: root.requestOpen("customer_select", {})
                 }
 
                 Item {
@@ -1188,7 +1323,7 @@ Item {
 
                             onClicked: root.selectedRow = index
                             onQtyRequested: (value) => root.setQty(index, value)
-                            onRemoveRequested: root.askRemove(index)
+                            onRemoveRequested: root.removeLine(index)
                         }
                     }
 
@@ -1237,75 +1372,178 @@ Item {
     // =====================================================================
     // CONFIRM
     // =====================================================================
-    /* Both dialogs state the measure rather than taking their width from the
-       dialog: FluentDialog sizes itself from its content, so a wrapping Text that
-       reads the dialog's width closes a binding loop. ProductsPage's header
-       explains the arithmetic. */
-    FluentDialog {
-        id: confirmRemove
-
-        property int row: -1
-        property string lineName: ""
-        readonly property int measure: 420
-
-        modal: true
-        title: Strings.t("confirm.delete_row.title", "Remove this line?")
-        standardButtons: QC.Dialog.Yes | QC.Dialog.No
-
-        onAccepted: if (root.ctrl) root.ctrl.remove(confirmRemove.row)
-
-        contentItem: Column {
-            spacing: Tokens.spacing.sm
-
-            Text {
-                width: confirmRemove.measure
-                text: Strings.t("confirm.delete_row.body",
-                                "It will be taken off this sale.")
-                wrapMode: Text.WordWrap
-                color: Fluent.textPrimary
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-            }
-
-            /* The name on its own line rather than inside the question: a product
-               called "500 g" is ambiguous in a sentence and unambiguous here, and
-               the catalogue string needs no placeholder to be mistranslated. */
-            Text {
-                width: confirmRemove.measure
-                text: confirmRemove.lineName
-                visible: text !== ""
-                wrapMode: Text.WordWrap
-                color: Fluent.textPrimary
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                font.weight: Font.DemiBold
-            }
-        }
-    }
-
-    FluentDialog {
+    /*
+     * Voiding asks; removing one line does not (see `removeLine`).
+     *
+     * It used to ask with one sentence out of the catalogue and a pair of Yes/No
+     * buttons, and that sentence was `Strings.t("confirm.empty_cart.body", …)` — a key
+     * whose text names a slot ("Remove all {count} line(s) from the current cart?")
+     * called through the function that does not substitute. So the operator was asked
+     * to confirm a literal `{count}`, and nothing on the dialog said what the cart was
+     * worth or whose account it was going to.
+     *
+     * Now the figures are the message: items and units, the total, and the customer
+     * when there is one. And when the cart is a completed invoice being rewritten, the
+     * dialog says the thing that actually matters — the invoice on file is untouched,
+     * only this copy of it goes.
+     *
+     * The wording lives under `confirm.void_sale.*` rather than in
+     * `confirm.empty_cart.*`: pos's own widgets screen still asks with those keys and
+     * substitutes them properly (pos/app/pages/pos.py:1130), so its dialog keeps its
+     * sentence and this one gets its own.
+     */
+    ConfirmDialog {
         id: confirmVoid
-        readonly property int measure: 420
 
-        modal: true
-        title: Strings.t("confirm.empty_cart.title", "Void this sale?")
-        standardButtons: QC.Dialog.Yes | QC.Dialog.No
+        readonly property bool editing: root.ctrl && root.ctrl.editing > 0
 
-        onAccepted: {
+        glyph: "ic_fluent_delete_dismiss_20_regular"
+        title: editing ? Strings.t("confirm.discard_edit.title",
+                                   "Discard these changes?")
+                       : Strings.t("confirm.void_sale.title", "Void this sale?")
+
+        body: editing
+              ? Strings.tf("confirm.discard_edit.body",
+                           "Invoice {number} stays exactly as it is. Only the copy in the cart is discarded.",
+                           { number: root.ctrl ? root.ctrl.editingNumber : "" })
+              : Strings.t("confirm.void_sale.body",
+                          "Nothing is recorded. The lines go, and the customer with them.")
+
+        facts: [
+            {
+                label: Strings.t("pos.summary.items", "Items"),
+                value: root.ctrl && root.ctrl.itemsText !== ""
+                       ? root.ctrl.itemsText + " \u00b7 " + root.ctrl.qtyText : "",
+                tone: ""
+            },
+            {
+                label: Strings.t("pos.summary.total", "Total"),
+                value: root.ctrl ? root.ctrl.totalText : "",
+                tone: ""
+            },
+            {
+                label: Strings.t("pos.customer", "Customer"),
+                value: root.ctrl && root.ctrl.hasCustomer
+                       ? root.ctrl.customerName : "",
+                tone: ""
+            }
+        ]
+
+        confirmText: editing ? Strings.t("confirm.discard_edit.action",
+                                         "Discard the changes")
+                             : Strings.t("confirm.void_sale.action", "Void the sale")
+        cancelText: editing ? Strings.t("action.keep_editing", "Keep editing")
+                            : Strings.t("action.keep_cart", "Keep the cart")
+
+        onConfirmed: {
             root.dismiss()
             root.selectedRow = -1
             if (root.ctrl)
                 root.ctrl.clear()
         }
+    }
 
-        contentItem: Text {
-            width: confirmVoid.measure
-            text: Strings.t("confirm.empty_cart.body",
-                            "Every line is removed and the customer is cleared.")
-            wrapMode: Text.WordWrap
-            color: Fluent.textPrimary
-            font.family: Tokens.font.family
-            font.pixelSize: Tokens.font.body
+    /*
+     * BEFORE THE SHELF GOES NEGATIVE, WHILE THERE IS STILL A DECISION.
+     *
+     * The other stock dialog on this page (`belowZero`) is a receipt for something
+     * that already happened. This one is the question, and the difference is the
+     * whole point of it: the line has not been added, so there are three real
+     * answers and it draws all three — sell it anyway, put stock on the shelf, or
+     * leave it. Nothing here decides; the till does, when the answer comes back
+     * through addAnyway / setQtyAnyway.
+     *
+     * "Caution" and not "danger": selling a miscounted shelf is a normal day in a
+     * shop, and painting it red would teach the operator to dismiss it on sight —
+     * which is exactly what the amber tone plus a "do not show again" box is trying
+     * not to make them do.
+     */
+    ConfirmDialog {
+        id: shortStock
+
+        /* The payload from `stockBlocked`, held rather than read out of a signal
+           argument: the dialog outlives the emission and the answer needs the same
+           product and the same figures the question was asked about. */
+        property var info: null
+
+        readonly property bool out: shortStock.info
+                                    && shortStock.info.kind === "out"
+
+        /* The tick and the answer both, in one place: the box is only honoured when
+           the operator actually answered — see ConfirmDialog's note on why Cancel
+           does not count. */
+        function settle() {
+            if (root.ctrl && shortStock.suppressed)
+                root.ctrl.setWarnStock(false)
+        }
+
+        tone: "caution"
+        glyph: "ic_fluent_warning_20_regular"
+
+        title: shortStock.out
+               ? Strings.t("stock.short.out.title", "Out of stock")
+               : Strings.t("stock.short.title", "Not enough stock")
+
+        body: shortStock.info
+              ? (shortStock.out
+                 ? Strings.tf("stock.short.out.body",
+                              "{name} has nothing left on the shelf. It can still be sold — the count simply goes below zero.",
+                              { name: shortStock.info.name })
+                 : Strings.tf("stock.short.body",
+                              "{name} does not have enough on the shelf for this line. It can still be sold — the count simply goes below zero.",
+                              { name: shortStock.info.name }))
+              : ""
+
+        /* The two figures the decision is made on, and nothing else. The shelf is
+           toned because it is the one that is wrong. */
+        facts: shortStock.info ? [
+            {
+                label: Strings.t("stock.current", "On the shelf"),
+                value: shortStock.info.stock_text,
+                tone: shortStock.out ? "danger" : "warning"
+            },
+            {
+                label: Strings.t("stock.short.wanted", "This line wants"),
+                value: shortStock.info.wanted_text,
+                tone: ""
+            }
+        ] : []
+
+        confirmText: Strings.t("stock.short.sell", "Sell it anyway")
+        cancelText: Strings.t("action.cancel", "Cancel")
+
+        /* Absent, not dimmed, for an operator who may not adjust stock: a button
+           that opens a refusal is worse than no button. */
+        extraText: root.canAdjustStock ? Strings.t("stock.short.add", "Add stock")
+                                       : ""
+        extraGlyph: "ic_fluent_add_square_20_regular"
+
+        /* pos's own wording for the same box on the report dialog. */
+        suppressText: Strings.t("negstock.mute", "Do not show again")
+
+        onConfirmed: {
+            shortStock.settle()
+            if (!root.ctrl || !shortStock.info)
+                return
+            /* A quantity typed into a line is not the same act as a tap on a tile,
+               and the payload says which one asked: `row` is -1 for an add. Re-adding
+               a unit to a line that already holds four would answer the wrong
+               question. */
+            if (shortStock.info.row >= 0)
+                root.ctrl.setQtyAnyway(shortStock.info.row, shortStock.info.wanted)
+            else
+                root.ctrl.addAnyway(shortStock.info.product_id)
+        }
+
+        /* The adjustment sheet, stacked over this. Deliberately no automatic retry
+           afterwards: the operator came here to sell one thing and is now correcting
+           a shelf count, and a line appearing by itself when they close the sheet is
+           a line they did not ask for. The tile is still where it was. */
+        onExtraRequested: {
+            shortStock.settle()
+            if (shortStock.info)
+                root.requestOpen("stock_adjust",
+                                 { product_id: shortStock.info.product_id })
         }
     }
 
@@ -1581,6 +1819,13 @@ Item {
         due: root.ctrl ? root.ctrl.total : 0
         allowZero: true
         confirmText: Strings.t("action.confirm", "Confirm")
+
+        /* Rewriting an invoice: what is entered becomes the invoice's total paid, so
+           the sheet opens on what was already paid and says out loud that a new figure
+           replaces it. `update_sale` is explicit about the rule (db.py:2706) and the
+           mistake it prevents is a customer's debt moving the wrong way. */
+        replaces: root.ctrl ? root.ctrl.editing > 0 : false
+        alreadyPaid: root.ctrl ? root.ctrl.editingPaid : 0
 
         facts: {
             var out = []

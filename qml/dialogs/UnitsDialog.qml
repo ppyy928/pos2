@@ -7,13 +7,30 @@ import Mizan
 /*
  * Units of measure — piece, kilogram, litre. Ported from pos's unit management.
  *
- * Two fields, because that is the whole record: a name for the form and an
- * abbreviation for the places a name will not fit, which is the stock column on
- * every product row.
+ *   ┌ Units ─────────────────────────────┐
+ *   │ Box                         ✏  🗑  │
+ *   │ Kilogram                    ✏  🗑  │
+ *   │ Litre                       ✏  🗑  │
+ *   ├────────────────────────────────────┤
+ *   │ + Add unit                  Close  │
+ *   └────────────────────────────────────┘
  *
- * A unit in use cannot be deleted. The database refuses it and its sentence is
- * shown as it comes, because "12 products still use this unit" is more useful than
- * anything this screen could invent.
+ * A LIST, AND NOTHING ELSE
+ *
+ * Adding and renaming both happen in `UnitFormDialog`, which opens over this one.
+ * What used to be here instead was an entry row welded to the bottom that doubled
+ * as the editor of whichever row was selected — two jobs, one set of fields, and
+ * no way to tell from the screen which of them was about to happen.
+ *
+ * A unit is one word. There is no short code to type any more: the only place it
+ * was read is the suffix on a product's stock cell, and that now falls back to the
+ * unit's name.
+ *
+ * DELETING ONE DOES NOT REFUSE
+ *
+ * pos reassigns rather than refuses: every product on the unit is left with none,
+ * and the products stay. Silent, if nobody says so — so the confirmation names the
+ * unit and says how many products it is about to detach.
  */
 AppDialog {
     id: dialog
@@ -21,46 +38,83 @@ AppDialog {
     property var context: ({})
 
     readonly property var ctrl: (typeof app !== "undefined" && app) ? app.catalogue : null
-    readonly property int measure: 620
-    readonly property int listHeight: 300
+    readonly property int measure: 560
+    readonly property int listHeight: 320
 
-    preferredWidth: 780
+    preferredWidth: 700
     title: Strings.t("units.title", "Units")
 
     property var rows: []
-    property int selected: -1
-    readonly property var current: selected >= 0 && selected < rows.length
-                                  ? rows[selected] : null
 
     Component.onCompleted: reload()
 
     function reload() {
         rows = ctrl ? ctrl.units() : []
-        if (selected >= rows.length)
-            selected = -1
-        fill()
-    }
-
-    function fill() {
-        name.text = current ? current.name : ""
-        abbreviation.text = current ? current.abbreviation : ""
-    }
-
-    onSelectedChanged: fill()
-
-    function save() {
-        error.text = ""
-        if (ctrl)
-            ctrl.saveUnit(name.text, abbreviation.text, current ? current.id : 0)
     }
 
     Connections {
         target: dialog.ctrl
         ignoreUnknownSignals: true
         function onChanged() { dialog.reload() }
-        function onRejected(message) { error.text = message }
+        /* The form shows its own refusals while it is open; this catches the ones
+           that belong to a delete. */
+        function onRejected(message) {
+            if (!form.visible)
+                error.text = message
+        }
     }
 
+    // =====================================================================
+    // THE ADD/EDIT FORM, AND THE ONE DESTRUCTIVE QUESTION
+    // =====================================================================
+    /* Declared here rather than routed through `workflows`: the form belongs to this
+       list's task, has no permission of its own, and is handed the row by `edit(row)`
+       rather than a context. DialogHost stacks either way. */
+    UnitFormDialog {
+        id: form
+        onCommitted: error.text = ""
+    }
+
+    FluentDialog {
+        id: confirmDelete
+
+        property int unitId: -1
+        property string unitName: ""
+        readonly property int measure: 440
+
+        modal: true
+        title: Strings.t("units.delete.title", "Delete this unit?")
+        standardButtons: QC.Dialog.Yes | QC.Dialog.No
+
+        onAccepted: if (dialog.ctrl) dialog.ctrl.deleteUnit(confirmDelete.unitId)
+
+        contentItem: Column {
+            spacing: Tokens.spacing.sm
+
+            Text {
+                width: confirmDelete.measure
+                text: Strings.t("units.delete.body",
+                                "Products measured in it keep their stock and are left without a unit.")
+                wrapMode: Text.WordWrap
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.body
+                color: Fluent.textPrimary
+            }
+
+            Text {
+                width: confirmDelete.measure
+                text: confirmDelete.unitName
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.body
+                font.weight: Font.DemiBold
+                color: Fluent.textPrimary
+            }
+        }
+    }
+
+    // =====================================================================
+    // LAYOUT
+    // =====================================================================
     contentItem: ColumnLayout {
         spacing: Tokens.spacing.md
 
@@ -91,11 +145,12 @@ AppDialog {
 
                     width: list.width
                     height: Tokens.size.tableRow
-                    color: index === dialog.selected ? Tokens.brandTint
-                         : hover.hovered ? Fluent.subtleSecondary : "transparent"
+                    color: hover.hovered ? Fluent.subtleSecondary : "transparent"
 
                     HoverHandler { id: hover }
-                    TapHandler { onTapped: dialog.selected = row.index }
+                    /* The row opens its own editor — the same gesture as every
+                       table in this app. */
+                    TapHandler { onTapped: form.edit(row.modelData) }
 
                     RowLayout {
                         anchors.fill: parent
@@ -113,12 +168,11 @@ AppDialog {
                             elide: Text.ElideRight
                         }
 
-                        Text {
-                            Layout.preferredWidth: 140
-                            text: row.modelData.abbreviation
-                            font.family: Tokens.font.family
-                            font.pixelSize: Tokens.font.body
-                            color: Fluent.textSecondary
+                        IconButton {
+                            glyph: "ic_fluent_edit_20_regular"
+                            glyphSize: Tokens.icon.sm
+                            tooltip: Strings.t("action.edit", "Edit")
+                            onClicked: form.edit(row.modelData)
                         }
 
                         IconButton {
@@ -127,9 +181,9 @@ AppDialog {
                             glyphColor: Tokens.danger
                             tooltip: Strings.t("action.delete", "Delete")
                             onClicked: {
-                                dialog.selected = row.index
-                                if (dialog.ctrl)
-                                    dialog.ctrl.deleteUnit(row.modelData.id)
+                                confirmDelete.unitId = row.modelData.id
+                                confirmDelete.unitName = row.modelData.name
+                                confirmDelete.open()
                             }
                         }
                     }
@@ -140,45 +194,16 @@ AppDialog {
                 anchors.fill: parent
                 visible: list.count === 0
                 variant: "empty"
-            }
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Tokens.spacing.sm
-
-            QC.TextField {
-                id: name
-                Layout.fillWidth: true
-                Layout.preferredHeight: Tokens.size.control
-                placeholderText: Strings.t("units.name", "Unit name")
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                onAccepted: dialog.save()
-            }
-
-            QC.TextField {
-                id: abbreviation
-                Layout.preferredWidth: 160
-                Layout.preferredHeight: Tokens.size.control
-                placeholderText: Strings.t("units.abbreviation", "Short")
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                onAccepted: dialog.save()
-            }
-
-            GlyphButton {
-                glyph: "ic_fluent_save_20_regular"
-                text: dialog.current ? Strings.t("action.save", "Save")
-                                     : Strings.t("units.add", "Add")
-                enabled: name.text.trim() !== ""
-                onClicked: dialog.save()
+                title: Strings.t("units.empty.title", "No units yet")
+                actionText: Strings.t("units.add_title", "Add unit")
+                onActionRequested: form.edit(null)
             }
         }
 
         Text {
             id: error
             Layout.fillWidth: true
+            Layout.preferredWidth: dialog.measure
             visible: text !== ""
             wrapMode: Text.WordWrap
             font.family: Tokens.font.family
@@ -191,9 +216,10 @@ AppDialog {
             spacing: Tokens.spacing.sm
 
             GlyphButton {
-                visible: dialog.selected >= 0
-                text: Strings.t("units.new", "New unit")
-                onClicked: dialog.selected = -1
+                glyph: "ic_fluent_add_20_regular"
+                text: Strings.t("units.add_title", "Add unit")
+                highlighted: true
+                onClicked: form.edit(null)
             }
 
             Item { Layout.fillWidth: true }

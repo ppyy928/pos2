@@ -80,7 +80,27 @@ AppDialog {
 
     readonly property var ctrl: (typeof app !== "undefined" && app) ? app.catalogue : null
 
-    preferredWidth: 1420
+    /*
+     * AS WIDE AS FOUR TILES, AND NOT A PIXEL WIDER.
+     *
+     * This was 1420, and the tiles inside it were islands: four columns is a
+     * deliberate cap (see `columns` below), a tile is capped at `tileMax`, and
+     * 1420px divided four ways gives each cell 330px to hold a 192px card — so
+     * every gap between two cards came out at 138px while the gap between two rows
+     * stayed at 12. A wall of the shop's products with more air than product in it,
+     * which is the opposite of what the operator is here to read.
+     *
+     * The room was the fault, not the gaps: the surplus had nowhere to go but into
+     * the cells. So the dialog now asks for exactly the width its own wall needs —
+     * four cells of a tile plus one gap, the grid's inset, and the dialog's
+     * padding — and the leftover 138px per gap is simply not requested. Written as
+     * the arithmetic rather than as the number it comes to, because every term in it
+     * is a token that something else also reads.
+     */
+    preferredWidth: Tokens.size.tileColumns
+                    * (Tokens.size.tileMax + Tokens.spacing.sm)
+                    + 2 * Tokens.spacing.sm
+                    + leftPadding + rightPadding
     preferredHeight: 900
 
     title: Strings.t("products.arrange.action", "Arrange tiles")
@@ -110,6 +130,11 @@ AppDialog {
     }
 
     readonly property bool onFavorites: tab === "favorites"
+
+    /* The favourite star's box, and the room every tile keeps clear for it. One
+       number, because the two have to agree: a star wider than the reservation lands
+       on the product name. */
+    readonly property int starSize: 32
 
     function reload() {
         if (!ctrl) {
@@ -473,11 +498,16 @@ AppDialog {
                 model: dialog.rows
 
                 readonly property int gap: Tokens.spacing.sm
-                /* Three across, like the till's own grid at its usual width: this
-                   screen exists to show the arrangement as the cashier will meet
-                   it, so the row length has to be the same. pos pins its arrange
-                   grid to a fixed column count for the same reason. */
-                readonly property int columns: 3
+                /* The same count as the till's own wall, and the same cap on a tile's
+                   width: this screen exists to show the arrangement as the cashier
+                   will meet it, so a row here has to hold what a row there holds.
+                   It was pinned to 3 and then briefly flowed — which put seven across
+                   this dialog against the till's four, and an arrangement shown seven
+                   to a row is not the arrangement being arranged. */
+                readonly property int columns:
+                    Math.max(1, Math.min(Tokens.size.tileColumns,
+                                         Math.floor((width + gap)
+                                                    / (Tokens.size.tileMin + gap))))
 
                 cellWidth: Math.max(1, Math.floor(width / columns))
                 cellHeight: Tokens.size.tile + gap
@@ -518,9 +548,15 @@ AppDialog {
 
                     Item {
                         id: floater
-                        width: grid.cellWidth - grid.gap
+                        /* Capped and centred in the cell, like the till's tiles. The
+                           cap does nothing at this dialog's own width — see
+                           `preferredWidth`, which is chosen so a cell is a tile plus
+                           one gap — and holds the cards at the till's size on a
+                           window too narrow to grant the request. */
+                        width: Math.min(grid.cellWidth - grid.gap,
+                                        Tokens.size.tileMax)
                         height: grid.cellHeight - grid.gap
-                        x: Math.round(grid.gap / 2)
+                        x: Math.round((grid.cellWidth - width) / 2)
                         y: Math.round(grid.gap / 2)
 
                         scale: cell.dragging ? 1.05 : (cell.picked ? 1.02 : 1)
@@ -539,6 +575,10 @@ AppDialog {
                             priceText: ""
                             stock: 1            // arranging is not selling
                             accent: "transparent"
+                            /* Keep the top trailing corner clear: the star below is
+                               drawn over this tile, and these tiles are now as narrow
+                               as the till's. */
+                            nameTrailingRoom: dialog.starSize + Tokens.spacing.xs
                             /* Not a button here: a tap must not add anything to a
                                cart, and this screen owns the tap itself. */
                             enabled: false
@@ -648,9 +688,14 @@ AppDialog {
                                 /* Back into its cell. Restored as a BINDING: the
                                    handler wrote x and y directly while dragging, and
                                    a plain assignment would leave them literal for
-                                   the rest of this delegate's life. */
+                                   the rest of this delegate's life. The x binding is
+                                   the centring one declared above, not a margin —
+                                   restoring the wrong expression would leave every
+                                   dragged tile flush against its cell's leading
+                                   edge while its neighbours stayed centred. */
                                 floater.x = Qt.binding(function () {
-                                    return Math.round(grid.gap / 2)
+                                    return Math.round((grid.cellWidth
+                                                       - floater.width) / 2)
                                 })
                                 floater.y = Qt.binding(function () {
                                     return Math.round(grid.gap / 2)
@@ -662,11 +707,16 @@ AppDialog {
                         }
 
                         /* The star sits on the tile rather than beside it, because
-                           the tile is the row now. */
+                           the tile is the row now. Smaller than a toolbar button: on
+                           a tile this size a 48px target would take a third of the
+                           name's width away, and the tile reserves exactly this much
+                           for it. */
                         IconButton {
                             anchors.top: parent.top
                             anchors.right: parent.right
                             anchors.margins: Tokens.spacing.xs
+                            width: dialog.starSize
+                            height: dialog.starSize
                             glyph: cell.modelData.favorite
                                    ? "ic_fluent_star_20_filled"
                                    : "ic_fluent_star_20_regular"

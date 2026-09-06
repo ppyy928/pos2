@@ -1,9 +1,10 @@
 """Sales, behind `app.sales`.
 
-    read      busy, error, total, stats, rows
+    read      busy, error, total, stats, rows, returnReasons
     call      load(search, paymentType, page, pageSize, dateFrom, dateTo),
-              sale(id), createReturn(saleId, items, reason)
-    emits     invalidated(), returned(result), rejected(message)
+              sale(id), createReturn(saleId, items, reason),
+              deleteImpact(id), remove(id)
+    emits     invalidated(), returned(result), deleted(number), rejected(message)
 
 The list is pos's `fetch_sales` with every figure formatted and the payment type
 left as its raw key — the table draws it as a toned chip, and the tone is decided
@@ -29,6 +30,7 @@ from PySide6.QtCore import (
     Slot,
 )
 
+from .. import diagnostics
 from . import fmt, interop, legacy
 
 
@@ -41,6 +43,9 @@ class Sales(QObject):
     invalidated = Signal()
     returned = Signal("QVariant")
     saved = Signal("QVariant")
+    #: The sale is gone, and its number so the page can say which. Separate from
+    #: `saved`: a page that reloads on both still wants to word them differently.
+    deleted = Signal(str)
     rejected = Signal(str)
     #: A receipt reached the printer, or did not and says why. Separate from
     #: rejected(), because a failed print does not undo a completed sale and
@@ -50,15 +55,20 @@ class Sales(QObject):
     #: Private: the worker thread's way home.
     _finished = Signal(int, bool, str)
 
+    #: The return reasons are translated sentences, so the list is not constant:
+    #: a language change has to rebuild it like every other visible string.
+    reasonsChanged = Signal()
+
     def __init__(self, i18n: QObject, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._i18n = i18n
+        i18n.languageChanged.connect(self.reasonsChanged)
         self._rows: list[dict] = []
         self._stats: dict = {}
         self._total = 0
         self._busy = False
         self._error = ""
-        self._query = ("", "", 1, 100, "", "")
+        self._query = ("", "", 1, 100, "", "", 0)
         self._task = None
         self._finished.connect(self._settle)
 
@@ -89,18 +99,27 @@ class Sales(QObject):
     # QUERIES
     # =====================================================================
     @Slot(str, str, int, int, str, str)
+    @Slot(str, str, int, int, str, str, int)
     def load(self, search: str, payment_type: str, page: int, page_size: int,
-             date_from: str, date_to: str) -> None:
+             date_from: str, date_to: str, customer_id: int = 0) -> None:
+        """One page of sales.
+
+        `customer_id` is the exact party rather than a name that resembles one, and it
+        is last with a default so the six-argument callers written before it keep
+        working — `reload()` replays whatever `_query` holds.
+        """
         database = self._database()
         if database is None:
             return
         self._query = (search or "", payment_type or "", max(1, int(page)),
-                       int(page_size), date_from or "", date_to or "")
+                       int(page_size), date_from or "", date_to or "",
+                       int(customer_id or 0))
         self._set_busy(True)
         try:
             result = database.fetch_sales(
                 self._query[0], self._query[1] or None, self._query[2],
                 self._query[3], self._query[4] or None, self._query[5] or None,
+                self._query[6] or None,
             )
             self._rows = [self._row(row) for row in result["rows"]]
             self._total = int(result["total"])
@@ -192,6 +211,7 @@ class Sales(QObject):
         try:
             return database.get_setting("receipt.auto_print", "1") == "1"
         except Exception:  # noqa: BLE001
+            diagnostics.log.debug("receipt.auto_print unreadable", exc_info=True)
             return False
 
     @Slot(int)
@@ -215,7 +235,11 @@ class Sales(QObject):
             self.printFailed.emit(error)
         elif not ok:
             # print_sale_by_id answers False when the sale is not there, which is
-            # a different problem from a printer that refused.
+            # a different problem from a printer that refused — and one that
+            # raised nothing on the pool thread, so this is its only record.
+            diagnostics.log.warning(
+                "receipt print returned no confirmation: sale_id=%s", sale_id
+            )
             self.printFailed.emit(self._i18n.text("toast.print_failed"))
         else:
             self.printed.emit(str(sale_id))
@@ -229,6 +253,53 @@ class Sales(QObject):
     # =====================================================================
     # RETURNS
     # =====================================================================
+    #: The reasons a return may carry, in the order the dialog offers them.
+    #: Codes here, sentences in the string catalogue (`return.reason.<code>`).
+    #:
+    #: A fixed list rather than a text field, because the field was answering the
+    #: wrong question: "damaged", "Damaged", "damage", "abîmé" and "تالف" are one
+    #: reason typed five ways, which makes the reason column on the returns page
+    #: and in the returns report unreadable within a week. Twelve choices cover
+    #: what a shop actually sees; the thirteenth reason is the empty one.
+    RETURN_REASONS = (
+        "damaged",
+        "expired",
+        "wrong_item",
+        "wrong_qty",
+        "faulty",
+        "quality",
+        "opened",
+        "changed_mind",
+        "not_needed",
+        "wrong_price",
+        "double_rung",
+        "exchange",
+    )
+
+    @Property("QVariantList", notify=reasonsChanged)
+    def returnReasons(self) -> list:
+        """The dropdown's model. First entry empty, always.
+
+        The empty one is first and is what the dialog opens on: a return with no
+        stated reason is a normal return — the goods and the money are the record
+        — and a required reason only teaches the operator to pick whatever is at
+        the top. It is also what every existing return has, so the list does not
+        rewrite history.
+
+        Sentences, not codes, because a sentence is what gets stored: the returns
+        page, the return's own details dialog and the returns report all print
+        `Return.reason` exactly as it was written, the same way a cash movement's
+        reason and a stock adjustment's reason are printed. Storing codes would
+        mean translating in three more places and would leave every return
+        recorded before today as unreadable text beside a set of tidy codes.
+
+        The cost is stated plainly: a shop that switches language keeps the
+        reasons it already recorded in the language they were recorded in. That is
+        true of every other reason field in this application.
+        """
+        return ["", *(self._i18n.text(f"return.reason.{code}")
+                      for code in self.RETURN_REASONS)]
+
     @Slot(int, "QVariant", str)
     def createReturn(self, sale_id: int, items: object, reason: str) -> None:
         """`items` is [{product_id, qty}] — quantities only, prices are the
@@ -370,6 +441,76 @@ class Sales(QObject):
         self.reload()
 
     # =====================================================================
+    # DELETING ONE
+    # =====================================================================
+    @Slot(int, result="QVariant")
+    def deleteImpact(self, sale_id: int) -> object:
+        """What deleting this sale would do — read before the operator is asked.
+
+        A confirmation that says "are you sure" asks the operator to remember what
+        the invoice contained. This hands the figures back so the dialog can state
+        them: the lines, the total, what comes out of the drawer and what comes off
+        the customer's account. `returns` is the blocker rather than a warning — the
+        data layer refuses while it is set.
+        """
+        database = self._database()
+        if database is None:
+            return None
+        try:
+            impact = database.sale_delete_impact(int(sale_id))
+        except Exception as exc:  # noqa: BLE001
+            self.rejected.emit(str(exc))
+            return None
+        if not impact:
+            self.rejected.emit(self._i18n.text("sales.missing",
+                                               "That sale no longer exists."))
+            return None
+        return {
+            "number": impact["number"],
+            "lines": int(impact["lines"]),
+            "units": fmt.qty(impact["units"]),
+            "total": fmt.money(impact["total"]),
+            "paid": fmt.money(impact["paid"]),
+            "debt": fmt.money(impact["debt"]),
+            "customer": impact["customer"],
+            # Raw as well as formatted: the dialog hides a row that is zero, and
+            # "0,00 DA" is not falsy.
+            "paid_value": float(impact["paid"]),
+            "debt_value": float(impact["debt"]),
+            "returns": int(impact["returns"]),
+        }
+
+    @Slot(int)
+    def remove(self, sale_id: int) -> None:
+        """Delete a sale and everything it did: stock back on, debt off, drawer
+        movement removed.
+
+        The return guard is the data layer's — `delete_sale` raises rather than
+        trusting a caller to have checked — and its refusal is turned into the same
+        sentence the edit path uses, because it is the same situation and the same
+        remedy: delete the return first.
+        """
+        database = self._database()
+        if database is None:
+            return
+        try:
+            result = database.delete_sale(int(sale_id))
+        except Exception as exc:  # noqa: BLE001
+            message = str(exc)
+            if "has returns" in message:
+                message = self._i18n.text(
+                    "sales.delete_returned",
+                    "This sale has a return against it. Delete the return first.")
+            elif "not found" in message:
+                message = self._i18n.text("sales.missing",
+                                          "That sale no longer exists.")
+            self.rejected.emit(message)
+            return
+        self.deleted.emit(str(result.get("number") or ""))
+        self.invalidated.emit()
+        self.reload()
+
+    # =====================================================================
     # INTERNALS
     # =====================================================================
     def _row(self, row: dict) -> dict:
@@ -417,6 +558,19 @@ class Sales(QObject):
         self.busyChanged.emit()
 
     def _set_error(self, message: str) -> None:
+        # Logged before the dedup: the same sentence twice is two failures, and
+        # the traceback — still live inside the emitting except block — is what
+        # str(exc) threw away. Two severities, same test as the rejected tap:
+        # a live exception is an ERROR, a bare sentence ("Nothing to print.")
+        # is a refusal the operator can act on and stays DEBUG. An empty
+        # message clears the banner and is not a failure at all.
+        if message:
+            if diagnostics.active_exc():
+                diagnostics.log.error(
+                    "screen error: %s", message, exc_info=True
+                )
+            else:
+                diagnostics.log.debug("screen error: %s", message)
         if self._error == message:
             return
         self._error = message
@@ -582,6 +736,19 @@ class Returns(QObject):
         self.busyChanged.emit()
 
     def _set_error(self, message: str) -> None:
+        # Logged before the dedup: the same sentence twice is two failures, and
+        # the traceback — still live inside the emitting except block — is what
+        # str(exc) threw away. Two severities, same test as the rejected tap:
+        # a live exception is an ERROR, a bare sentence ("Nothing to print.")
+        # is a refusal the operator can act on and stays DEBUG. An empty
+        # message clears the banner and is not a failure at all.
+        if message:
+            if diagnostics.active_exc():
+                diagnostics.log.error(
+                    "screen error: %s", message, exc_info=True
+                )
+            else:
+                diagnostics.log.debug("screen error: %s", message)
         if self._error == message:
             return
         self._error = message
@@ -603,7 +770,12 @@ class _PrintTask(QRunnable):
             ok = printing.print_sale_by_id(self._sale_id, cashier=self._cashier)
         except Exception as exc:  # noqa: BLE001
             # A missing printer, a missing font, a missing Pillow: all of them are
-            # a sentence for the operator rather than a crashed thread.
+            # a sentence for the operator rather than a crashed thread. The
+            # traceback belongs in errors.log — a pool thread has no stderr the
+            # operator will ever see.
+            diagnostics.log.exception(
+                "receipt print failed: sale_id=%s", self._sale_id
+            )
             self._sales._finished.emit(self._sale_id, False, str(exc))
             return
         self._sales._finished.emit(self._sale_id, bool(ok), "")

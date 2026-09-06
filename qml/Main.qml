@@ -62,6 +62,16 @@ FluentWindowBase {
     property var currentUser: null
     readonly property bool signedIn: currentUser !== null
 
+    /* Who is at the till is the first question a support log has to answer, and
+       the shell is where that becomes true. `auth.login` and its result are
+       already traced on the Python side; this is the shell agreeing. */
+    onCurrentUserChanged: {
+        if (currentUser)
+            Diag.action("shell", "signed in", currentUser.name || currentUser.username)
+        else
+            Diag.action("shell", "signed out")
+    }
+
     /*
      * Theme changes go through the manager, never through Fluent.setTheme():
      * Fluent.isDark is *bound* to the _themeMode context property, so assigning
@@ -69,8 +79,11 @@ FluentWindowBase {
      * DWM frame stops following the theme.
      */
     function toggleTheme() {
-        if (typeof _themeManager === "undefined" || !_themeManager)
+        if (typeof _themeManager === "undefined" || !_themeManager) {
+            Diag.warn("shell", "no theme manager; the theme cannot be changed")
             return
+        }
+        Diag.action("shell", "theme", Fluent.isDark ? "light" : "dark")
         _themeManager.setTheme(Fluent.isDark ? "light" : "dark")
     }
 
@@ -175,7 +188,13 @@ FluentWindowBase {
             // One-way: the rail asks, the host decides, the rail reflects. The
             // checked state can never disagree with what is on screen.
             currentKey: host.currentKey
-            onActivated: (key) => host.show(key)
+            onActivated: (key) => {
+                // The operator's own navigation, told apart in the log from the
+                // programmatic kind (a dashboard card, a link in a detail view),
+                // which arrives through Destinations.requested below.
+                Diag.action("NavRail", "navigate", key)
+                host.show(key)
+            }
         }
 
         PageHost {
@@ -206,7 +225,11 @@ FluentWindowBase {
         // 1366px till it is the difference between 4 and 5 tile columns.
         Shortcut {
             sequence: "Ctrl+B"
-            onActivated: rail.collapsed = !rail.collapsed
+            onActivated: {
+                rail.collapsed = !rail.collapsed
+                Diag.action("shell", "Ctrl+B rail",
+                            rail.collapsed ? "collapsed" : "expanded")
+            }
         }
 
         // Escape backs out of a drill-down (order detail, product editor) and does
@@ -217,7 +240,10 @@ FluentWindowBase {
         Shortcut {
             sequence: "Escape"
             enabled: window.signedIn && host.depth > 1
-            onActivated: host.pop()
+            onActivated: {
+                Diag.action("shell", "Escape back")
+                host.pop()
+            }
         }
 
         Connections {
@@ -230,6 +256,9 @@ FluentWindowBase {
             }
 
             function onCloseRequested() {
+                // The last line of a normal run, and the one that tells a crash
+                // apart from a shutdown when the log ends without it.
+                Diag.action("shell", "quit requested from the login screen")
                 Qt.quit()
             }
         }
@@ -260,7 +289,10 @@ FluentWindowBase {
            that acts on it. */
         Connections {
             target: Destinations
-            function onRequested(key) { host.show(key) }
+            function onRequested(key) {
+                Diag.action("shell", "navigate requested by a page", key)
+                host.show(key)
+            }
         }
 
         /* The workflow router asks, the window answers. Every page funnels its

@@ -60,7 +60,14 @@ Rectangle {
      * icon at the trailing end of this strip instead: beside the number it applies,
      * where the eye already is after typing, and where the mode pill has been saying
      * what it will do all along.
+     *
+     * `actionVisible: false` for a readout with nothing to apply. The payment
+     * calculator is that case — it commits nothing, so a tick there was a control that
+     * did literally nothing when pressed (it emitted `applied()` and nobody was
+     * listening), and the mode pill beside it named a mode that does not exist. Both
+     * are gone there: `modeText` is already conditional, and this makes the button so.
      */
+    property bool actionVisible: true
     property bool actionEnabled: true
     signal applied()
 
@@ -164,6 +171,7 @@ Rectangle {
             id: applyButton
 
             Layout.alignment: Qt.AlignVCenter
+            visible: display.actionVisible
             implicitWidth: Tokens.size.control
             implicitHeight: Tokens.size.control
             radius: Tokens.radius.sm

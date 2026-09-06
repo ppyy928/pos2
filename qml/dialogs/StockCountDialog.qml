@@ -84,7 +84,25 @@ AppDialog {
     readonly property var sheet: ctrl && ctrl.hasSheet ? ctrl.sheet : ({})
     readonly property bool open_: ctrl ? ctrl.hasSheet : false
     readonly property var summary: sheet.summary !== undefined ? sheet.summary : ({})
-    readonly property var lines: sheet.items !== undefined ? sheet.items : []
+
+    /*
+     * The sheet, newest line first.
+     *
+     * pos hands the lines over in the order they were added, and the row an operator
+     * wants is the one they just scanned — so the list is reversed here. It used to
+     * be done with the ListView's `verticalLayoutDirection: BottomToTop`, which put
+     * the newest line at the *bottom* of the frame: with one product on the sheet,
+     * the header sat at the top and the only row on screen sat 300px below it, with
+     * nothing in between. Reversing the model instead keeps the first line directly
+     * under the header, where a list starts.
+     */
+    readonly property var lines: {
+        var src = sheet.items !== undefined ? sheet.items : []
+        var out = []
+        for (var i = src.length - 1; i >= 0; i--)
+            out.push(src[i])
+        return out
+    }
 
     property string notice: ""
 
@@ -355,10 +373,9 @@ AppDialog {
                     Layout.fillHeight: true
                     visible: dialog.lines.length > 0
                     clip: true
-                    /* Newest first: the line just scanned is the one being typed
-                       into, so it must not be at the bottom of a hundred rows. */
+                    /* Newest first — see `lines` above, which is where the order is
+                       decided. The list itself fills from the header down. */
                     model: dialog.lines
-                    verticalLayoutDirection: ListView.BottomToTop
                     cacheBuffer: 400
 
                     QC.ScrollBar.vertical: FluentScrollBar {
@@ -412,15 +429,12 @@ AppDialog {
                                 color: Fluent.textSecondary
                             }
 
-                            QC.TextField {
+                            NumberField {
                                 Layout.preferredWidth: 140
                                 Layout.preferredHeight: Tokens.size.controlSmall
                                 enabled: dialog.canManage
                                 text: line.modelData.counted_text
                                 horizontalAlignment: TextInput.AlignHCenter
-                                inputMethodHints: Qt.ImhFormattedNumbersOnly
-                                font.family: Tokens.font.family
-                                font.pixelSize: Tokens.font.bodyLarge
                                 placeholderText: "—"
                                 /* On editing finished, not per keystroke: a
                                    half-typed "1" of "12" would post a variance of

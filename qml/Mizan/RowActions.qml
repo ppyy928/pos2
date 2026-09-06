@@ -100,8 +100,16 @@ Item {
 
     /* pos keys the tooltip off the action id — tr(f"action.{action_id}") — so
        these share the catalogue entries with every button that does the same
-       thing elsewhere on the page. */
+       thing elsewhere on the page.
+
+       An explicit `label` wins, because the seven ids are shared vocabulary and a
+       caller with an id of its own has nothing in the catalogue under that name: the
+       saved-carts list says "Open" for a cart it restores, where `action.open` is the
+       catalogue's "Open / Manage" for a record. Documented in the header as part of
+       an action, and until now silently ignored. */
     function labelOf(action) {
+        if (action && action.label !== undefined && action.label !== "")
+            return action.label
         var id = action && action.id ? action.id : ""
         return Strings.t("action." + id, defaultsFor(action).label)
     }

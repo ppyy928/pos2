@@ -191,12 +191,10 @@ AppDialog {
                     color: Fluent.textSecondary
                 }
 
-                QC.TextField {
+                NumberField {
                     id: qty
                     Layout.fillWidth: true
                     Layout.preferredHeight: Tokens.size.control
-                    inputMethodHints: Qt.ImhFormattedNumbersOnly
-                    font.family: Tokens.font.family
                     font.pixelSize: Tokens.font.body
                     onAccepted: dialog.apply()
                 }

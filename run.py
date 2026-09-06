@@ -4,9 +4,17 @@
     python run.py --diag       # launch and print the resolved QML environment
     python run.py --check      # verify the vendored style, then exit
     python run.py --mica       # launch with the Windows 11 Mica backdrop
+    python run.py --debug      # launch with DEBUG console chatter
+    python run.py --no-trace   # launch without the per-action trace
 
 Bootstrap order is not arbitrary; each step depends on the one before it:
 
+0. ``app.diagnostics.init()`` before anything else, so every later step —
+   including a vendor failure that exits — leaves a record in ``logs/``.
+   On a windowed exe, stderr does not exist and the log files are the only
+   witness a failed launch ever has. The per-action trace is installed later,
+   by the bridge itself (``app/instrument.py``), because it has to wrap
+   controllers that do not exist yet at this point.
 1. ``pos2/vendor`` goes on ``sys.path`` *first*, so ``import fluentpyside``
    resolves to the scaled copy rather than any pip-installed one.
 2. ``fluentpyside.apply()`` sets ``QML2_IMPORT_PATH`` and the QQuickStyle. It
@@ -31,6 +39,9 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+
+from app.diagnostics import active_exc, log
+from app.diagnostics import init as init_diagnostics
 
 HERE = Path(__file__).resolve().parent
 VENDOR = HERE / "vendor"
@@ -84,6 +95,11 @@ NO_PREFER = (
 
 
 def _die(message: str, *hint: str) -> "NoReturn":  # noqa: F821
+    # Logged before the stderr lines: on a windowed exe stderr is invisible,
+    # and a launch that dies must still explain itself in errors.log. The
+    # traceback is attached when _die fired inside an except block (the usual
+    # path) and skipped when it is a plain startup precondition.
+    log.critical("fatal: %s", message, exc_info=active_exc())
     print(f"error: {message}", file=sys.stderr)
     for line in hint:
         print(f"  {line}", file=sys.stderr)
@@ -163,12 +179,12 @@ def load_icon_font() -> str | None:
 
     path = VENDOR_PKG / "FluentControls" / ICON_FONT
     if not path.is_file():
-        print(f"warning: icon font not found: {path}", file=sys.stderr)
+        log.warning("icon font not found: %s", path)
         return None
 
     font_id = QFontDatabase.addApplicationFont(str(path))
     if font_id < 0:
-        print(f"warning: failed to load {ICON_FONT}", file=sys.stderr)
+        log.warning("failed to load %s", ICON_FONT)
         return None
 
     families = QFontDatabase.applicationFontFamilies(font_id)
@@ -226,10 +242,7 @@ def register_bridges(engine) -> None:
     try:
         from app.bridge import register_all
     except ImportError as exc:
-        print(
-            f"note: no bridge layer yet ({exc}) — UI runs without data",
-            file=sys.stderr,
-        )
+        log.warning("no bridge layer yet (%s) — UI runs without data", exc)
         return
     register_all(engine)
 
@@ -247,10 +260,35 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="enable the Windows 11 Mica backdrop (cosmetic, off by default)",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="echo DEBUG-level records to the console (files are unaffected)",
+    )
+    parser.add_argument(
+        "--no-trace",
+        dest="trace",
+        action="store_false",
+        help="do not trace every action (see app/instrument.py)",
+    )
     args = parser.parse_args(argv)
+
+    # Before init(), because the banner reports the state and because the bridge
+    # reads it when it installs the wrappers. MIZAN_TRACE=0 does the same thing
+    # for a frozen build, which has no command line worth speaking of.
+    if not args.trace:
+        from app.diagnostics import set_trace
+
+        set_trace(False)
+
+    # Before everything: once this returns, any later failure — vendor checks
+    # included — lands in logs/{app,debug,errors}.log with a traceback.
+    log_dir = init_diagnostics(debug=args.debug)
+    log.info("=== %s starting ===", APP_NAME)
 
     verify_vendor()
     if args.check:
+        log.info("vendored style OK: %s", VENDOR_PKG)
         print(f"vendored style OK: {VENDOR_PKG}")
         return 0
 
@@ -288,11 +326,16 @@ def main(argv: list[str] | None = None) -> int:
     engine.addImportPath(str(VENDOR_PKG))
     engine.addImportPath(str(QML_DIR))  # import Mizan
 
-    engine.warnings.connect(
-        lambda errors: [
-            print(f"qml: {e.toString()}", file=sys.stderr) for e in errors
-        ]
-    )
+    # QML's own diagnostics: binding loops, missing properties, script errors.
+    # Logged rather than printed — qInstallMessageHandler already covers the
+    # C++ side, this is the QML engine's batched view of the same story.
+    qml_log = log.getChild("qml")
+
+    def _qml_warnings(errors) -> None:
+        for e in errors:
+            qml_log.warning("%s", e.toString())
+
+    engine.warnings.connect(_qml_warnings)
 
     fluentpyside.register_context(engine)
 
@@ -304,22 +347,31 @@ def main(argv: list[str] | None = None) -> int:
     register_bridges(engine)
 
     if args.diag:
-        print(f"style path   : {style_path}")
-        print(f"icon family  : {icon_family}")
-        print(f"ui font      : {app.font().families()} @ {app.font().pixelSize()}px")
-        print(f"import paths : {engine.importPathList()}")
-        print(f"qml entry    : {MAIN_QML}")
+        for line in (
+            f"style path   : {style_path}",
+            f"icon family  : {icon_family}",
+            f"ui font      : {app.font().families()} @ {app.font().pixelSize()}px",
+            f"import paths : {engine.importPathList()}",
+            f"qml entry    : {MAIN_QML}",
+            f"logs         : {log_dir}",
+            f"action trace : {'on' if args.trace else 'off'}",
+        ):
+            log.info("diag: %s", line)
+            print(line)
 
     engine.load(str(MAIN_QML))
     if not engine.rootObjects():
-        _die(f"failed to load {MAIN_QML}", "see the qml: lines above")
+        _die(f"failed to load {MAIN_QML}", "see the qml: records in the log")
 
     fluentpyside.setup_windows(engine)
     _ensure_visible(engine)
     if args.mica:
         _enable_mica(engine, QTimer)
 
-    return app.exec()
+    log.info("entering the event loop")
+    code = app.exec()
+    log.info("exited cleanly with code %s", code)
+    return code
 
 
 def _ensure_visible(engine) -> None:
@@ -338,10 +390,9 @@ def _ensure_visible(engine) -> None:
     if root.isVisible():
         return
 
-    print(
-        "warning: the frameless window setup did not complete; showing the "
-        "window with whatever frame the platform gives it",
-        file=sys.stderr,
+    log.warning(
+        "the frameless window setup did not complete; showing the window with "
+        "whatever frame the platform gives it"
     )
     root.setVisible(True)
 
@@ -363,7 +414,7 @@ def _enable_mica(engine, QTimer) -> None:
     only switched on once ``apply_mica`` has reported success.
     """
     if sys.platform != "win32":
-        print("note: --mica is Windows-only; ignored", file=sys.stderr)
+        log.info("--mica is Windows-only; ignored")
         return
 
     import fluentpyside
@@ -371,7 +422,7 @@ def _enable_mica(engine, QTimer) -> None:
 
     manager = fluentpyside.theme_manager()
     if manager is None:
-        print("note: no theme manager; --mica ignored", file=sys.stderr)
+        log.info("no theme manager; --mica ignored")
         return
     # Lets the library reapply the backdrop itself on every theme change.
     manager.setBackdrop(True)
@@ -386,7 +437,7 @@ def _enable_mica(engine, QTimer) -> None:
         try:
             applied = apply_mica(root, dark=manager._resolve_dark())
         except Exception as exc:  # cosmetic only — never fatal
-            print(f"note: Mica unavailable ({exc}); solid background", file=sys.stderr)
+            log.info("Mica unavailable (%s); solid background", exc)
             return
 
         if applied:
@@ -397,14 +448,22 @@ def _enable_mica(engine, QTimer) -> None:
         if attempts["n"] < max_attempts:
             QTimer.singleShot(retry_ms, attempt)
         else:
-            print(
-                "note: this system did not accept a Mica backdrop; "
-                "keeping the solid window background",
-                file=sys.stderr,
+            log.info(
+                "this system did not accept a Mica backdrop; "
+                "keeping the solid window background"
             )
 
     QTimer.singleShot(0, attempt)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # sys.excepthook (installed by app.diagnostics) already logs anything the
+    # event loop raises; this wrapper covers the lines above its installation
+    # and guarantees a non-zero exit shape even if logging itself is broken.
+    try:
+        raise SystemExit(main())
+    except SystemExit:
+        raise
+    except Exception:
+        log.critical("unhandled crash during startup", exc_info=True)
+        raise

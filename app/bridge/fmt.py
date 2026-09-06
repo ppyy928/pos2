@@ -11,6 +11,7 @@ figure that matters, not on every row of a table.
 
 from __future__ import annotations
 
+from .. import diagnostics
 from . import legacy
 
 
@@ -18,6 +19,10 @@ def money(value: object) -> str:
     try:
         return legacy.formatters().fmt_money(value, currency=False)
     except Exception:  # noqa: BLE001
+        # DEBUG, not higher: these fire on every formatted cell while the
+        # legacy layer is absent, and app.log must stay readable. The record
+        # says why a screen full of "—" looks like that.
+        diagnostics.log.debug("money fallback for %r", value, exc_info=True)
         return "—"
 
 
@@ -26,6 +31,7 @@ def compact(value: object) -> str:
     try:
         return legacy.formatters().fmt_compact(value, currency=False)
     except Exception:  # noqa: BLE001
+        diagnostics.log.debug("compact fallback for %r", value, exc_info=True)
         return "—"
 
 
@@ -33,6 +39,7 @@ def qty(value: object) -> str:
     try:
         return legacy.formatters().fmt_qty(value)
     except Exception:  # noqa: BLE001
+        diagnostics.log.debug("qty fallback for %r", value, exc_info=True)
         return ""
 
 
@@ -41,4 +48,5 @@ def when(value: object) -> str:
     try:
         return legacy.formatters().fmt_dt(value)
     except Exception:  # noqa: BLE001
+        diagnostics.log.debug("date fallback for %r", value, exc_info=True)
         return str(value or "")

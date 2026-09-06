@@ -192,17 +192,14 @@ Rectangle {
                        is pushed in from onQtyTextChanged below, which is the only
                        other place it can change. Same reason ProductsPage sets
                        ComboBox.currentIndex by hand. */
-                    QC.TextField {
+                    NumberField {
                         id: qtyField
                         anchors.verticalCenter: parent.verticalCenter
                         width: 72
                         height: Tokens.size.control
                         horizontalAlignment: TextInput.AlignHCenter
-                        font.family: Tokens.font.family
                         font.pixelSize: Tokens.font.body
                         font.weight: Font.DemiBold
-                        inputMethodHints: Qt.ImhFormattedNumbersOnly
-                        selectByMouse: true
 
                         Component.onCompleted: text = line.qtyText
 

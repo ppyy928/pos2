@@ -9,16 +9,24 @@ import Mizan
  * management.
  *
  *   Coca-Cola 1.5L
- *     Pack of 6      × 6    550,00    6133273409991
- *     Case of 24     × 24  2 100,00   6133273409992
+ *     Pack of 6      × 6    550,00    6133273409991   ✏ 🗑
+ *     Case of 24     × 24  2 100,00   6133273409992   ✏ 🗑
  *
  * This is not labelling. The till's barcode lookup returns a multi-unit hit with
  * its base quantity, so scanning the case's barcode adds twenty-four units at the
  * case's own price — one scan, one line, the right stock movement. That is why a
- * multi-unit needs a barcode of its own to be worth having.
+ * multi-unit needs a barcode of its own to be worth having, and why the ones
+ * without are marked.
  *
  * Opened from a product it lists that product's units; opened from the catalogue it
- * lists all of them and asks which product a new one belongs to.
+ * lists all of them and the form asks which product a new one belongs to.
+ *
+ * A LIST, AND NOTHING ELSE
+ *
+ * Adding and editing happen in `MultiUnitFormDialog`, over this one. The four
+ * fields used to sit in a row under the list and doubled as the editor of whichever
+ * line was selected — so a pack added while a case was selected overwrote the case,
+ * barcode included.
  */
 AppDialog {
     id: dialog
@@ -26,158 +34,85 @@ AppDialog {
     property var context: ({})
 
     readonly property var ctrl: (typeof app !== "undefined" && app) ? app.catalogue : null
-    readonly property var catalogueProducts: (typeof app !== "undefined" && app)
-                                             ? app.products : null
 
     readonly property int productId: context && context.product_id
                                      ? context.product_id : 0
     readonly property int measure: 820
-    readonly property int listHeight: 320
+    readonly property int listHeight: 380
 
     preferredWidth: 1120
     title: Strings.t("product.multi_units", "Multi-units")
 
     property var rows: []
-    property int selected: -1
-    readonly property var current: selected >= 0 && selected < rows.length
-                                  ? rows[selected] : null
 
-    /* Which product a new unit belongs to: the one this was opened for, or the one
-       picked below. */
-    property int targetProduct: productId
-    property string targetName: ""
-
-    Component.onCompleted: {
-        reload()
-        if (productId)
-            name.forceActiveFocus()
-    }
+    Component.onCompleted: reload()
 
     function reload() {
         rows = ctrl ? ctrl.multiUnits(productId) : []
-        if (selected >= rows.length)
-            selected = -1
-        fill()
-    }
-
-    function fill() {
-        name.text = current ? current.name : ""
-        qty.text = current ? String(current.base_qty) : ""
-        price.text = current ? String(current.price) : ""
-        barcode.text = current ? current.barcode : ""
-        if (current) {
-            targetProduct = current.product_id
-            targetName = current.product
-        }
-    }
-
-    onSelectedChanged: fill()
-
-    function save() {
-        error.text = ""
-        if (!ctrl)
-            return
-        if (!targetProduct) {
-            error.text = Strings.t("mu.product.required",
-                                   "Choose the product this unit belongs to.")
-            return
-        }
-        ctrl.saveMultiUnit({
-            product_id: targetProduct,
-            name: name.text,
-            base_qty: qty.text,
-            price: price.text,
-            barcode: barcode.text
-        }, current ? current.id : 0)
     }
 
     Connections {
         target: dialog.ctrl
         ignoreUnknownSignals: true
         function onChanged() { dialog.reload() }
-        function onRejected(message) { error.text = message }
+        function onRejected(message) {
+            if (!form.visible)
+                error.text = message
+        }
     }
 
-    /* The same eight-match popup the purchase form uses, for the same reason:
-       three thousand products do not go in a dropdown. */
-    QC.Popup {
-        id: picker
-        width: 520
-        height: 340
+    // =====================================================================
+    // THE FORM, AND THE ONE DESTRUCTIVE QUESTION
+    // =====================================================================
+    /* Declared here rather than routed through `workflows`: the form belongs to this
+       list's task, has no permission of its own, and is handed the row by `edit(row)`
+       rather than a context. DialogHost stacks either way. */
+    MultiUnitFormDialog {
+        id: form
+        lockedProduct: dialog.productId
+        onCommitted: error.text = ""
+    }
+
+    FluentDialog {
+        id: confirmDelete
+
+        property var target: null
+        readonly property int measure: 440
+
         modal: true
-        focus: true
-        anchors.centerIn: QC.Overlay.overlay
+        title: Strings.t("mu.delete.title", "Delete this multi-unit?")
+        standardButtons: QC.Dialog.Yes | QC.Dialog.No
 
-        background: Rectangle {
-            color: Fluent.popupBackground
-            border.color: Fluent.flyoutBorder
-            border.width: 1
-            radius: Tokens.radius.md
-        }
+        onAccepted: if (dialog.ctrl && confirmDelete.target)
+                        dialog.ctrl.deleteMultiUnit(confirmDelete.target.id)
 
-        onOpened: query.forceActiveFocus()
-
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: Tokens.spacing.md
+        contentItem: Column {
             spacing: Tokens.spacing.sm
 
-            QC.TextField {
-                id: query
-                Layout.fillWidth: true
-                Layout.preferredHeight: Tokens.size.control
-                placeholderText: Strings.t("products.search.ph",
-                                           "Search name or barcode")
+            Text {
+                width: confirmDelete.measure
+                text: Strings.t("mu.delete.body",
+                                "Its barcode stops resolving at the till. The product itself is untouched.")
+                wrapMode: Text.WordWrap
                 font.family: Tokens.font.family
                 font.pixelSize: Tokens.font.body
-                onTextChanged: if (dialog.catalogueProducts)
-                                   dialog.catalogueProducts.load(text, 1, 8, 0)
+                color: Fluent.textPrimary
             }
 
-            ListView {
-                id: matches
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                clip: true
-                model: dialog.catalogueProducts ? dialog.catalogueProducts.rows : null
-
-                QC.ScrollBar.vertical: FluentScrollBar {
-                    policy: QC.ScrollBar.AsNeeded
-                }
-
-                delegate: Rectangle {
-                    id: hit
-                    required property var modelData
-
-                    width: matches.width
-                    height: Tokens.size.control
-                    color: hover.hovered ? Fluent.subtleSecondary : "transparent"
-
-                    HoverHandler { id: hover }
-                    TapHandler {
-                        onTapped: {
-                            dialog.targetProduct = hit.modelData.id
-                            dialog.targetName = hit.modelData.name
-                            picker.close()
-                        }
-                    }
-
-                    Text {
-                        anchors.fill: parent
-                        anchors.leftMargin: Tokens.spacing.sm
-                        anchors.rightMargin: Tokens.spacing.sm
-                        verticalAlignment: Text.AlignVCenter
-                        text: hit.modelData.name
-                        font.family: Tokens.font.family
-                        font.pixelSize: Tokens.font.body
-                        color: Fluent.textPrimary
-                        elide: Text.ElideRight
-                    }
-                }
+            Text {
+                width: confirmDelete.measure
+                text: confirmDelete.target ? confirmDelete.target.name : ""
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.body
+                font.weight: Font.DemiBold
+                color: Fluent.textPrimary
             }
         }
     }
 
+    // =====================================================================
+    // LAYOUT
+    // =====================================================================
     contentItem: ColumnLayout {
         spacing: Tokens.spacing.md
 
@@ -208,11 +143,10 @@ AppDialog {
 
                     width: list.width
                     height: Tokens.size.tableRow
-                    color: index === dialog.selected ? Tokens.brandTint
-                         : hover.hovered ? Fluent.subtleSecondary : "transparent"
+                    color: hover.hovered ? Fluent.subtleSecondary : "transparent"
 
                     HoverHandler { id: hover }
-                    TapHandler { onTapped: dialog.selected = row.index }
+                    TapHandler { onTapped: form.edit(row.modelData) }
 
                     RowLayout {
                         anchors.fill: parent
@@ -266,7 +200,9 @@ AppDialog {
 
                         Text {
                             Layout.preferredWidth: 220
-                            text: "\u200e" + row.modelData.barcode
+                            text: row.modelData.barcode === ""
+                                  ? Strings.t("barcode.none", "no barcode")
+                                  : "\u200e" + row.modelData.barcode
                             font.family: Tokens.font.family
                             font.pixelSize: Tokens.font.caption
                             color: row.modelData.barcode === "" ? Tokens.warning
@@ -276,12 +212,21 @@ AppDialog {
                         }
 
                         IconButton {
+                            glyph: "ic_fluent_edit_20_regular"
+                            glyphSize: Tokens.icon.sm
+                            tooltip: Strings.t("action.edit", "Edit")
+                            onClicked: form.edit(row.modelData)
+                        }
+
+                        IconButton {
                             glyph: "ic_fluent_delete_20_regular"
                             glyphSize: Tokens.icon.sm
                             glyphColor: Tokens.danger
                             tooltip: Strings.t("action.delete", "Delete")
-                            onClicked: if (dialog.ctrl)
-                                           dialog.ctrl.deleteMultiUnit(row.modelData.id)
+                            onClicked: {
+                                confirmDelete.target = row.modelData
+                                confirmDelete.open()
+                            }
                         }
                     }
                 }
@@ -294,105 +239,15 @@ AppDialog {
                 title: Strings.t("mu.empty.title", "No multi-units")
                 body: Strings.t("mu.empty.body",
                                 "Add one for a pack or a case that has its own barcode.")
-            }
-        }
-
-        // -----------------------------------------------------------------
-        RowLayout {
-            Layout.fillWidth: true
-            visible: dialog.productId === 0
-            spacing: Tokens.spacing.sm
-
-            Text {
-                Layout.alignment: Qt.AlignVCenter
-                text: Strings.t("mu.product", "Product")
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.caption
-                font.weight: Font.DemiBold
-                color: Fluent.textSecondary
-            }
-
-            Text {
-                Layout.fillWidth: true
-                text: dialog.targetName !== ""
-                      ? dialog.targetName
-                      : Strings.t("mu.product.required",
-                                  "Choose the product this unit belongs to.")
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                color: dialog.targetName !== "" ? Fluent.textPrimary
-                                                : Fluent.textTertiary
-                elide: Text.ElideRight
-            }
-
-            GlyphButton {
-                glyph: "ic_fluent_search_20_regular"
-                text: Strings.t("selector.open_picker", "Find a product")
-                onClicked: picker.open()
-            }
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Tokens.spacing.sm
-
-            QC.TextField {
-                id: name
-                Layout.fillWidth: true
-                Layout.preferredHeight: Tokens.size.control
-                placeholderText: Strings.t("mu.name", "Unit name (pack of 6)")
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                onAccepted: dialog.save()
-            }
-
-            QC.TextField {
-                id: qty
-                Layout.preferredWidth: 120
-                Layout.preferredHeight: Tokens.size.control
-                placeholderText: Strings.t("mu.qty", "× qty")
-                inputMethodHints: Qt.ImhFormattedNumbersOnly
-                horizontalAlignment: TextInput.AlignHCenter
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                onAccepted: dialog.save()
-            }
-
-            QC.TextField {
-                id: price
-                Layout.preferredWidth: 160
-                Layout.preferredHeight: Tokens.size.control
-                placeholderText: Strings.t("mu.price", "Price")
-                inputMethodHints: Qt.ImhFormattedNumbersOnly
-                horizontalAlignment: TextInput.AlignRight
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                onAccepted: dialog.save()
-            }
-
-            QC.TextField {
-                id: barcode
-                Layout.preferredWidth: 220
-                Layout.preferredHeight: Tokens.size.control
-                placeholderText: Strings.t("mu.barcode", "Barcode")
-                horizontalAlignment: TextInput.AlignLeft
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                onAccepted: dialog.save()
-            }
-
-            GlyphButton {
-                glyph: "ic_fluent_save_20_regular"
-                text: dialog.current ? Strings.t("action.save", "Save")
-                                     : Strings.t("product.add_multi_unit", "Add")
-                enabled: name.text.trim() !== "" && qty.text !== ""
-                onClicked: dialog.save()
+                actionText: Strings.t("mu.add_title", "Add multi-unit")
+                onActionRequested: form.edit(null)
             }
         }
 
         Text {
             id: error
             Layout.fillWidth: true
+            Layout.preferredWidth: dialog.measure
             visible: text !== ""
             wrapMode: Text.WordWrap
             font.family: Tokens.font.family
@@ -405,9 +260,10 @@ AppDialog {
             spacing: Tokens.spacing.sm
 
             GlyphButton {
-                visible: dialog.selected >= 0
-                text: Strings.t("mu.new", "New multi-unit")
-                onClicked: dialog.selected = -1
+                glyph: "ic_fluent_add_20_regular"
+                text: Strings.t("mu.add_title", "Add multi-unit")
+                highlighted: true
+                onClicked: form.edit(null)
             }
 
             Item { Layout.fillWidth: true }

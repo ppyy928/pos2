@@ -114,11 +114,21 @@ Item {
             if (printer)
                 printer.printPurchase(data.id)
         }
-        else if (action === "delete") {
-            confirmDelete.invoiceId = data.id
-            confirmDelete.number = data.number
-            confirmDelete.open()
-        }
+        else if (action === "delete")
+            askDelete(data.id)
+    }
+
+    /* The question, with what it would cost read out of the database first — see the
+       confirmation at the bottom of this file for what those two conditions are. */
+    function askDelete(invoiceId) {
+        if (!ctrl)
+            return
+        var impact = ctrl.deleteImpact(invoiceId)
+        if (!impact)
+            return
+        confirmDelete.invoiceId = invoiceId
+        confirmDelete.impact = impact
+        confirmDelete.open()
     }
 
     function requestOpen(key, context) {
@@ -305,41 +315,99 @@ Item {
         }
     }
 
-    FluentDialog {
+    /*
+     * Deleting a delivery is the one destructive act on this app that routinely cannot
+     * be undone cleanly, and the confirmation is where that is said.
+     *
+     * `delete_purchase_invoice` takes the delivered quantities back off the shelf and
+     * reduces the supplier's account by what is still owed on the invoice — both
+     * clamped at zero, because a negative shelf and a negative account are worse than
+     * a wrong one. By the time somebody deletes a delivery, though, the goods may have
+     * been sold and the invoice may have been paid down, and then each clamp swallows a
+     * difference the books will never show again.
+     *
+     * So `deleteImpact` reads both before anything is written, and the two conditions
+     * appear as warnings with the actual numbers in them: which product is short and by
+     * how much, and how much of the debt reversal the account cannot absorb. Neither
+     * blocks the delete — only the operator can judge whether the correction is worth
+     * it — but neither happens silently.
+     */
+    ConfirmDialog {
         id: confirmDelete
 
         property int invoiceId: -1
-        property string number: ""
-        readonly property int measure: 460
+        property var impact: null
 
-        modal: true
-        title: Strings.t("purchases.delete.title", "Delete this invoice?")
-        standardButtons: QC.Dialog.Yes | QC.Dialog.No
+        title: Strings.t("purchases.delete.title", "Delete this delivery?")
 
-        onAccepted: if (root.ctrl) root.ctrl.remove(confirmDelete.invoiceId)
+        body: impact
+              ? Strings.tf("purchases.delete.body2",
+                           "{number} is removed: the delivered stock comes back off the shelf and the supplier's account is reduced by what is still owed on it.",
+                           { number: impact.number })
+              : ""
 
-        contentItem: Column {
-            spacing: Tokens.spacing.sm
-
-            Text {
-                width: confirmDelete.measure
-                text: Strings.t("purchases.delete.body",
-                                "The stock it added is removed and the supplier debt it created is undone.")
-                wrapMode: Text.WordWrap
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                color: Fluent.textPrimary
+        facts: impact ? [
+            {
+                label: Strings.t("pos.summary.items", "Items"),
+                value: impact.lines + " \u00b7 " + impact.units,
+                tone: ""
+            },
+            {
+                label: Strings.t("purchases.col.total", "Total"),
+                value: impact.total,
+                tone: ""
+            },
+            {
+                label: Strings.t("purchases.delete.owed", "Still owed on it"),
+                value: impact.owed_value > 0 ? impact.owed : "",
+                tone: "danger"
+            },
+            {
+                label: impact.supplier !== ""
+                       ? Strings.tf("purchases.delete.supplier_holds",
+                                    "{name} is owed", { name: impact.supplier })
+                       : "",
+                value: impact.supplier !== "" ? impact.supplier_debt : "",
+                tone: ""
+            },
+            {
+                label: Strings.t("purchases.delete.batches", "Dated stock it created"),
+                value: impact.batches > 0 ? String(impact.batches) : "",
+                tone: "warning"
             }
+        ] : []
 
-            Text {
-                width: confirmDelete.measure
-                text: "\u200e" + confirmDelete.number
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                font.weight: Font.DemiBold
-                color: Fluent.textPrimary
+        /* The two conditions, with the figures in them. Built as a list rather than one
+           paragraph because they are independent: either, both or neither can apply. */
+        warnings: {
+            if (!impact)
+                return []
+            var out = []
+            if (impact.short.length > 0) {
+                var parts = []
+                for (var i = 0; i < impact.short.length; i++) {
+                    var line = impact.short[i]
+                    parts.push(Strings.tf("purchases.delete.short_line",
+                                          "{name} (delivered {delivered}, {stock} in stock)",
+                                          { name: line.name,
+                                            delivered: line.delivered,
+                                            stock: line.stock }))
+                }
+                out.push(Strings.tf("purchases.delete.short",
+                                    "Some of what this delivery brought in has been sold since: {lines}. Their stock stops at zero rather than going negative, so the shelf figures will be short by that much.",
+                                    { lines: parts.join("; ") }))
             }
+            if (impact.debt_short_value > 0)
+                out.push(Strings.tf("purchases.delete.debt_short",
+                                    "The supplier's account cannot give back the whole {owed} — it holds {held}. The difference of {diff} is dropped.",
+                                    { owed: impact.owed, held: impact.supplier_debt,
+                                      diff: impact.debt_short }))
+            return out
         }
+
+        confirmText: Strings.t("purchases.delete.action", "Delete the delivery")
+
+        onConfirmed: if (root.ctrl) root.ctrl.remove(confirmDelete.invoiceId)
     }
 
     ToastHost {

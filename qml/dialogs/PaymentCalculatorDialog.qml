@@ -12,7 +12,7 @@ import Mizan
  *   │ Payment calculator            │
  *   │ TOTAL           12 480,00 DA  │
  *   │ ┌───────────────────────────┐ │
- *   │ │ 15000            RECEIVED │ │
+ *   │ │ 15000                     │ │
  *   │ └───────────────────────────┘ │
  *   │ CHANGE           2 520,00 DA  │
  *   │ [7][8][9]                     │
@@ -71,10 +71,6 @@ AppDialog {
             if (buffer.indexOf(".") < 0)
                 buffer += "."
             return
-        case "apply":
-            /* Nothing to apply: there is no state to commit. Done closes it. */
-            dialog.close()
-            return
         }
         if (key.length === 1 && key >= "0" && key <= "9")
             buffer += key
@@ -119,13 +115,21 @@ AppDialog {
             value: dialog.money(dialog.total) + " " + (dialog.till ? dialog.till.currencyText : "")
         }
 
+        /*
+         * A readout, and nothing else.
+         *
+         * No mode pill and no tick: both belong to the till's strip, where the pill
+         * names what Apply will do and the tick does it. This screen commits nothing —
+         * the caption above it already says TOTAL and the line below says CHANGE — so
+         * the pill was labelling a mode that does not exist here and the tick was a
+         * control that did nothing at all when pressed. The trailing margin closes up
+         * with them, which is what leaves the number the width of the dialog.
+         */
         KeypadDisplay {
             Layout.fillWidth: true
             Layout.preferredWidth: 420
             text: dialog.buffer
-            modeText: Strings.t("pay.received", "Received")
-            modeGlyph: "ic_fluent_money_20_regular"
-            tone: "info"
+            actionVisible: false
         }
 
         /* One line, and which one depends on the sign: money owed back to the

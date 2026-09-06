@@ -6,6 +6,10 @@ singleton Tokens 1.0 Tokens.qml
 singleton Destinations 1.0 Destinations.qml
 singleton Strings 1.0 Strings.qml
 
+# The action trace, as QML writes to it: one guarded facade over `app.diag` so
+# that a component can log without knowing whether a bridge is attached.
+singleton Diag 1.0 Diag.qml
+
 # Shell.
 NavRail 1.0 NavRail.qml
 NavRailItem 1.0 NavRailItem.qml
@@ -13,6 +17,13 @@ ChromeButton 1.0 ChromeButton.qml
 PageHost 1.0 PageHost.qml
 DialogHost 1.0 DialogHost.qml
 AppDialog 1.0 AppDialog.qml
+
+# The question asked before something irreversible: the figures it will change, the
+# conditions it cannot undo cleanly, and a button that says the verb. One component,
+# because every destructive act in the app was asking with its own hand-rolled
+# Yes/No and none of them said what was at stake.
+ConfirmDialog 1.0 ConfirmDialog.qml
+
 ToastHost 1.0 ToastHost.qml
 
 # Page furniture, shared by every list page.
@@ -21,6 +32,12 @@ GlyphButton 1.0 GlyphButton.qml
 PageHeader 1.0 PageHeader.qml
 FilterBar 1.0 FilterBar.qml
 DateField 1.0 DateField.qml
+
+# Every field that holds a price, a cost or a quantity. One type, because the one
+# thing all twenty of them were missing was the same thing: selecting the existing
+# value when the field takes focus, so the first keystroke replaces it. See the
+# file's own header for why that is not a nicety on a till.
+NumberField 1.0 NumberField.qml
 
 # The section selector inside a record: sales / payments on a customer, invoices /
 # payments on a supplier, the three halves of the product editor. Named SectionBar
@@ -85,7 +102,12 @@ TotalsDock 1.0 TotalsDock.qml
 PayButton 1.0 PayButton.qml
 
 # Shared with the purchase screen, which selects a supplier the same way.
+# PartyCard is the surface — who is attached, the ✕ and the chevron. PartySelect
+# wraps it with the searchable list that drops under it, which is how both the till
+# and a delivery attach one: the dialog it replaced covered the cart and the note it
+# was being attached to.
 PartyCard 1.0 PartyCard.qml
+PartySelect 1.0 PartySelect.qml
 
 depends QtQuick
 depends QtQuick.Controls

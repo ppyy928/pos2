@@ -34,26 +34,33 @@ Item {
     function show(key) {
         var d = Destinations.byKey(key)
         if (!d) {
-            console.warn("PageHost: unknown destination", key)
+            Diag.warn("PageHost", "unknown destination " + key)
             return
         }
         host.currentKey = key
+        Diag.action("PageHost", "show " + key)
 
         if (!Destinations.isBuilt(key)) {
+            Diag.note("PageHost", key + " is not built in this version")
             stack.replace(null, placeholderPage, { destination: d })
             return
         }
 
         _load(Qt.resolvedUrl("../" + d.page), function (component, error) {
-            if (host.currentKey !== key)
-                return          // operator moved on while we were loading
+            if (host.currentKey !== key) {
+                // operator moved on while we were loading
+                Diag.note("PageHost", "dropped " + key + ", now on " + host.currentKey)
+                return
+            }
             if (error) {
+                Diag.fail("PageHost", key + ": " + error)
                 stack.replace(null, failurePage,
                               { destination: d, message: error })
                 host.pageFailed(key, error)
                 return
             }
             stack.replace(null, component)
+            Diag.note("PageHost", key + " loaded")
             host.pageLoaded(key)
         })
     }
@@ -62,16 +69,19 @@ Item {
     function push(url, props) {
         _load(url, function (component, error) {
             if (error) {
-                console.warn("PageHost: cannot push", url, "-", error)
+                Diag.fail("PageHost", "cannot push " + url + ": " + error)
                 return
             }
+            Diag.action("PageHost", "push", url)
             stack.push(component, props || {})
         })
     }
 
     function pop() {
-        if (stack.depth > 1)
+        if (stack.depth > 1) {
+            Diag.action("PageHost", "pop", host.currentKey)
             stack.pop()
+        }
     }
 
     function _load(url, done) {

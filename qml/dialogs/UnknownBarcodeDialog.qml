@@ -85,8 +85,10 @@ AppDialog {
                 glyph: "ic_fluent_add_20_regular"
                 text: Strings.t("unknown.add_product", "Add new product")
                 onClicked: {
-                    /* Replaces this dialog with the quick-add form, carrying the
-                       code — the host shows one dialog at a time. */
+                    /* Hands over to the quick-add form and closes: the question this
+                       dialog asks is answered, so it is not a layer to come back to.
+                       DialogHost stacks by default — a dialog that means to replace
+                       its opener says so, like this. */
                     if (dialog.workflows)
                         dialog.workflows.open("quick_add_product",
                                               { code: dialog.code })

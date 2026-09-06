@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
+from .. import diagnostics
 from . import fmt, interop, legacy
 
 
@@ -193,11 +194,69 @@ class Purchases(QObject):
         self.invalidated.emit()
         self.reload()
 
+    @Slot(int, result="QVariant")
+    def deleteImpact(self, invoice_id: int) -> object:
+        """What deleting this delivery would do, and what it cannot undo cleanly.
+
+        A delivery is not a document that can simply be withdrawn: it PUT stock on
+        the shelf and it created an obligation to the supplier, and by the time
+        somebody deletes it both may have moved on. `delete_purchase_invoice` clamps
+        both reversals at zero — correct, because a negative shelf and a negative
+        account are worse than a wrong one — and each clamp is a place where the books
+        quietly stop matching what happened.
+
+        So the two conditions are read out here and named on the confirmation:
+        `short` is every product whose current stock is less than what this invoice
+        delivered (the goods have been sold since), and `debt_short` is the part of
+        the unpaid amount the supplier's account can no longer give back (it has been
+        paid down since). Neither blocks the delete — only the operator can judge
+        whether the correction is worth it — but neither happens silently.
+        """
+        database = self._database()
+        if database is None:
+            return None
+        try:
+            impact = database.purchase_delete_impact(int(invoice_id))
+        except Exception as exc:  # noqa: BLE001
+            self.rejected.emit(str(exc))
+            return None
+        if not impact:
+            self.rejected.emit(self._i18n.text("purchases.missing",
+                                               "That invoice no longer exists."))
+            return None
+        short = [
+            {
+                "name": row["name"],
+                "delivered": fmt.qty(row["delivered"]),
+                "stock": fmt.qty(row["stock"]),
+                "missing": fmt.qty(row["missing"]),
+            }
+            for row in impact["short"]
+        ]
+        return {
+            "number": impact["number"],
+            "lines": int(impact["lines"]),
+            "units": fmt.qty(impact["units"]),
+            "total": fmt.money(impact["total"]),
+            "paid": fmt.money(impact["paid"]),
+            "owed": fmt.money(impact["owed"]),
+            "supplier": impact["supplier"],
+            "supplier_debt": fmt.money(impact["supplier_debt"]),
+            "debt_short": fmt.money(impact["debt_short"]),
+            "batches": int(impact["batches"]),
+            "short": short,
+            # Raw, for deciding whether a row is drawn at all: "0,00 DA" is not falsy.
+            "paid_value": float(impact["paid"]),
+            "owed_value": float(impact["owed"]),
+            "debt_short_value": float(impact["debt_short"]),
+        }
+
     @Slot(int)
     def remove(self, invoice_id: int) -> None:
         """Deleting an invoice takes its stock back out and undoes the debt it
         created — pos's delete does both, which is why this is a confirmed action
-        on the page rather than a row button."""
+        on the page rather than a row button. `deleteImpact` is what the
+        confirmation says out loud before this runs."""
         database = self._database()
         if database is None:
             return
@@ -290,6 +349,19 @@ class Purchases(QObject):
         self.busyChanged.emit()
 
     def _set_error(self, message: str) -> None:
+        # Logged before the dedup: the same sentence twice is two failures, and
+        # the traceback — still live inside the emitting except block — is what
+        # str(exc) threw away. Two severities, same test as the rejected tap:
+        # a live exception is an ERROR, a bare sentence ("Nothing to print.")
+        # is a refusal the operator can act on and stays DEBUG. An empty
+        # message clears the banner and is not a failure at all.
+        if message:
+            if diagnostics.active_exc():
+                diagnostics.log.error(
+                    "screen error: %s", message, exc_info=True
+                )
+            else:
+                diagnostics.log.debug("screen error: %s", message)
         if self._error == message:
             return
         self._error = message
@@ -347,6 +419,12 @@ class Suppliers(QObject):
                     "debt": float(row.get("debt") or 0.0),
                     "debt_text": fmt.money(row.get("debt") or 0.0),
                     "owes": float(row.get("debt") or 0.0) > 0,
+                    # What the bin on this row may do. The counts come from the same
+                    # query as the list, so a supplier with history shows a dimmed
+                    # icon rather than a refusal the operator has to press to find.
+                    "deletable": (int(row.get("invoice_count") or 0) == 0
+                                  and int(row.get("payment_count") or 0) == 0
+                                  and round(float(row.get("debt") or 0.0), 2) == 0.0),
                 }
                 for row in database.fetch_suppliers(self._search)
             ]
@@ -476,6 +554,34 @@ class Suppliers(QObject):
         payload = dict(result)
         payload["debt_text"] = fmt.money(payload.get("debt") or 0.0)
         self.paid.emit(payload)
+        self.invalidated.emit()
+        self.reload()
+
+    @Slot(int)
+    def remove(self, supplier_id: int) -> None:
+        """Delete a supplier that has no history at all.
+
+        The rule is the database's (`delete_supplier` refuses anything with an invoice,
+        a payment or a balance); the sentence belongs here, where the operator's
+        language is known.
+        """
+        database = self._database()
+        if database is None:
+            return
+        try:
+            database.delete_supplier(int(supplier_id))
+        except ValueError as exc:
+            if "has history" in str(exc):
+                self.rejected.emit(self._i18n.text(
+                    "suppliers.delete.refused",
+                    "This supplier has invoices, payments or a balance — the record "
+                    "stays so those documents keep the name on them."))
+            else:
+                self.rejected.emit(str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001
+            self.rejected.emit(str(exc))
+            return
         self.invalidated.emit()
         self.reload()
 

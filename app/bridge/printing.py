@@ -5,6 +5,7 @@ operator what it will look like first.
                     previewSale(id) / printSale(id, copies, cashier)
                     previewPurchase(id) / printPurchase(id, copies)
                     previewLabel(item) / printLabels(items)
+                    labelFormats, labelFormat / setLabelFormat(key)
 
 WHY ONE CONTROLLER AND NOT THREE
 
@@ -58,6 +59,7 @@ from PySide6.QtCore import (
     Slot,
 )
 
+from .. import diagnostics
 from . import fmt, interop, legacy
 
 #: Where previews are written. One directory, reused, with a stable name per kind —
@@ -78,6 +80,7 @@ class Printing(QObject):
     previewChanged = Signal()
     busyChanged = Signal()
     errorChanged = Signal()
+    labelFormatChanged = Signal()
 
     #: Internal, pool thread -> GUI thread: (what, count, error). A plain signal
     #: rather than a callback because a cross-thread signal is the one hand-off Qt
@@ -89,7 +92,7 @@ class Printing(QObject):
         super().__init__(parent)
         self._i18n = i18n
         self._preview = ""
-        self._preview_size = [0, 0]
+        self._preview_degraded = False
         self._version = 0
         self._busy = 0
         self._error = ""
@@ -106,11 +109,15 @@ class Printing(QObject):
         """A file URL for QML's Image.source, or "" when nothing is rendered."""
         return self._preview
 
-    @Property("QVariantList", notify=previewChanged)
-    def previewSize(self) -> list:
-        """[width, height] in pixels of the rendered image, so QML can scale it to
-        the panel without guessing the aspect ratio of an 80mm roll."""
-        return list(self._preview_size)
+    @Property(bool, notify=previewChanged)
+    def previewDegraded(self) -> bool:
+        """Whether the bars in the picture had to be squeezed to fit the label.
+
+        The engine trims the quiet zone and then downscales rather than clipping
+        a barcode, which keeps the sticker printable and makes it a scanner's
+        problem instead — at the till, days later. So the sheet says it now.
+        """
+        return self._preview_degraded
 
     @Property(bool, notify=busyChanged)
     def busy(self) -> bool:
@@ -142,6 +149,9 @@ class Printing(QObject):
                 return configured
             return str(legacy.labels().default_printer_name() or "")
         except Exception:  # noqa: BLE001
+            # A constant property, asked once: the reason a name is missing
+            # belongs in the log even though the UI copes with "".
+            diagnostics.log.debug("printer name unavailable", exc_info=True)
             return ""
 
     @Property(bool, constant=True)
@@ -156,8 +166,63 @@ class Printing(QObject):
             legacy.printing()
             legacy.labels()
         except Exception:  # noqa: BLE001
+            # WARNING, not DEBUG: a frozen build that lost Pillow is exactly
+            # the report this file exists to make possible.
+            diagnostics.log.warning("printing unavailable", exc_info=True)
             return False
         return True
+
+    # =====================================================================
+    # WHICH OF THE TWO DESIGNS
+    # =====================================================================
+    @Property("QVariantList", constant=True)
+    def labelFormats(self) -> list:
+        """The label designs, in the order the sheet shows them.
+
+        Read from the engine rather than listed here: which designs exist is a
+        rendering fact, and a front end that invented a third one would offer a
+        button that quietly prints the default.
+        """
+        try:
+            return list(legacy.labels().TEMPLATES)
+        except Exception:  # noqa: BLE001
+            diagnostics.log.debug("label formats unavailable", exc_info=True)
+            return []
+
+    @Property(str, notify=labelFormatChanged)
+    def labelFormat(self) -> str:
+        """The design the next label is drawn in.
+
+        Read from the settings table on every ask rather than cached: the
+        settings page writes the same key, and a sheet opened before that change
+        would otherwise show the wrong design selected.
+        """
+        try:
+            labels = legacy.labels()
+            configured = legacy.database().get_setting(
+                "barcode.format", labels.TEMPLATE_DEFAULT)
+            return str(labels.resolve_template_key(configured))
+        except Exception:  # noqa: BLE001
+            diagnostics.log.debug("label format unavailable", exc_info=True)
+            return ""
+
+    @Slot(str)
+    def setLabelFormat(self, key: str) -> None:
+        """Choose a design, and keep it.
+
+        Persisted rather than passed per job: it is a property of the shop's
+        labels, not of one print run, and the print path reads it back through
+        `load_label_options` — which is also what makes the older front end
+        print the same sticker.
+        """
+        try:
+            labels = legacy.labels()
+            resolved = labels.resolve_template_key(str(key or ""))
+            legacy.database().set_setting("barcode.format", resolved)
+        except Exception as exc:  # noqa: BLE001
+            self._set_error(str(exc))
+            return
+        self.labelFormatChanged.emit()
 
     # =====================================================================
     # PREVIEW
@@ -179,7 +244,7 @@ class Printing(QObject):
 
     @Slot()
     def clearPreview(self) -> None:
-        self._set_preview("", 0, 0)
+        self._set_preview("")
 
     # =====================================================================
     # WHAT CAN BE LABELLED
@@ -233,11 +298,11 @@ class Printing(QObject):
         try:
             image = self._image(kind, subject)
         except Exception as exc:  # noqa: BLE001
-            self._set_preview("", 0, 0)
+            self._set_preview("")
             self._set_error(str(exc))
             return
         if image is None:
-            self._set_preview("", 0, 0)
+            self._set_preview("")
             self._set_error(self._i18n.text("print.nothing", "Nothing to print."))
             return
 
@@ -246,13 +311,16 @@ class Printing(QObject):
         try:
             image.save(path)
         except Exception as exc:  # noqa: BLE001
-            self._set_preview("", 0, 0)
+            self._set_preview("")
             self._set_error(str(exc))
             return
 
         self._version += 1
         url = "file:///" + path.replace("\\", "/") + f"?v={self._version}"
-        self._set_preview(url, image.width, image.height)
+        # `info` is the engine's own report on the render, and PNG does not carry
+        # it — so it is read off the image before the URL goes to QML.
+        degraded = bool(getattr(image, "info", {}).get("barcode_degraded"))
+        self._set_preview(url, degraded)
 
     def _image(self, kind: str, subject: object):
         """The same call the print path makes, one step earlier."""
@@ -363,14 +431,27 @@ class Printing(QObject):
     # =====================================================================
     # INTERNALS
     # =====================================================================
-    def _set_preview(self, url: str, width: int, height: int) -> None:
-        if self._preview == url and self._preview_size == [width, height]:
+    def _set_preview(self, url: str, degraded: bool = False) -> None:
+        if self._preview == url and self._preview_degraded == degraded:
             return
         self._preview = url
-        self._preview_size = [int(width), int(height)]
+        self._preview_degraded = bool(degraded)
         self.previewChanged.emit()
 
     def _set_error(self, message: str) -> None:
+        # Logged before the dedup: the same sentence twice is two failures, and
+        # the traceback — still live inside the emitting except block — is what
+        # str(exc) threw away. Two severities, same test as the rejected tap:
+        # a live exception is an ERROR, a bare sentence ("Nothing to print.")
+        # is a refusal the operator can act on and stays DEBUG. An empty
+        # message clears the banner and is not a failure at all.
+        if message:
+            if diagnostics.active_exc():
+                diagnostics.log.error(
+                    "screen error: %s", message, exc_info=True
+                )
+            else:
+                diagnostics.log.debug("screen error: %s", message)
         if self._error == message:
             return
         self._error = message
@@ -392,7 +473,14 @@ class _Job(QRunnable):
             count = self._send()
         except Exception as exc:  # noqa: BLE001
             # A missing printer, a missing font, a missing Pillow: all of them are
-            # a sentence for the operator rather than a crashed thread.
+            # a sentence for the operator rather than a crashed thread. The
+            # traceback belongs in errors.log — a pool thread has no stderr the
+            # operator will ever see.
+            diagnostics.log.exception(
+                "print job failed: %s id=%s",
+                self._what,
+                self._payload.get("id", "-"),
+            )
             self._owner._finished.emit(self._what, 0, str(exc))
             return
         self._owner._finished.emit(self._what, int(count), "")

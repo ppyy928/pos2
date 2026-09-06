@@ -5,7 +5,7 @@ import FluentControls
 import Mizan
 
 /*
- * One product in the POS tile grid.
+ * One product in the POS tile grid — in the two shapes a product card comes in.
  *
  *     PosTile {
  *         name: row.name
@@ -14,14 +14,49 @@ import Mizan
  *         stockText: row.stock_text
  *         lowStock: row.low_stock
  *         accent: row.colour
+ *         showImage: page.imageCards     // the grid decides, not the row
+ *         imageSource: row.image         // "" for a product without a photo
  *         onClicked: page.pick(row)
  *     }
  *
- *     ┌─────────────────────────────┐
- *     │▌ Coca-Cola 1.5L             │   name, up to two lines
- *     │▌                            │
- *     │▌ 120,00 DA        ⟨2 pcs⟩   │   price, and the stock — always
- *     └─────────────────────────────┘
+ *   WITHOUT A PHOTO (120px)          WITH ONE (244px)
+ *   ┌─────────────────────────┐      ┌─────────────────────────┐
+ *   │▌ Coca-Cola 1.5L         │      │▌ ┌───────────────────┐  │
+ *   │▌                        │      │▌ │                   │  │
+ *   │▌ 120,00 DA     ⟨2 pcs⟩  │      │▌ │      [photo]      │  │
+ *   └─────────────────────────┘      │▌ └───────────────────┘  │
+ *                                    │▌ Coca-Cola 1.5L         │
+ *                                    │▌ 120,00 DA     ⟨2 pcs⟩  │
+ *                                    └─────────────────────────┘
+ *
+ * WHY TWO SHAPES AND NOT TWO COMPONENTS
+ *
+ * Everything below the photo is identical — the same name, the same price, the
+ * same stock pill, the same accent, the same press feedback, the same tooltip.
+ * Two files would be two places to fix the next thing that is wrong with a
+ * product card, and they would drift: this is the mistake the till's own header
+ * describes making with its search results. So the photo is a band this card
+ * grows, and `showImage` is the one property that says whether it has it.
+ *
+ * WHY THE GRID DECIDES AND NOT THE ROW
+ *
+ * A GridView has ONE cellHeight. If each card chose for itself, a category where
+ * three products have photos would lay 244px cards and 120px cards into cells of
+ * one size — clipping some and stranding others in a sea of white. So the page
+ * asks the controller once (`Till.imageCards`) and every card in the grid answers
+ * the same way; a product with no photo of its own gets the placeholder below
+ * rather than a different card.
+ *
+ * WHY THE PLACEHOLDER IS A GLYPH AND NOT THE PRODUCT'S INITIAL
+ *
+ * The first version put the product's own first letter on its category's colour,
+ * on the argument that a repeated grey glyph says "forty things are missing"
+ * while a letter differentiates. Rendering it against a real catalogue killed
+ * that: shops name products with the brand first — Atlas Milk, Atlas Rice, Atlas
+ * Salt — so the wall read A A A A A, which differentiates nothing and competes
+ * with the name printed directly underneath it. A quiet "no photo" mark is the
+ * honest answer, and the shop photographs its catalogue one product at a time
+ * either way.
  *
  * WHY THE STOCK IS ON EVERY TILE
  *
@@ -77,6 +112,18 @@ QC.AbstractButton {
     property string priceText: ""
     property string barcode: ""
 
+    /* The product's photo, as a URL. "" is a product without one, and so is a
+       photo whose file has gone missing — the bridge answers "" for both, and
+       there is nothing a card could usefully do differently about the second. */
+    property string imageSource: ""
+
+    /* Does this card have a photo band at all? The GRID's answer, not the row's
+       — see the header. */
+    property bool showImage: false
+
+    /* Is there a picture to draw in it? */
+    readonly property bool hasImage: showImage && imageSource !== ""
+
     /* Raw, because it decides the pill's tone. */
     property real stock: 0
     property string stockText: ""
@@ -86,6 +133,15 @@ QC.AbstractButton {
        and a zero alpha is the one value that can never be a real choice. */
     property color accent: "transparent"
     readonly property bool tinted: accent.a > 0
+
+    /* Room to keep clear at the trailing end of the NAME, for something the host
+       draws over the card's top corner.
+       The arrange screen puts a favourite star there. It fitted while that grid was
+       pinned to three columns and the tiles were 440px wide; the moment the grid
+       started flowing from `tileMin` like the till's, the star landed on top of the
+       product name. Nothing else on the face moves — the price row is at the bottom
+       and the corner is at the top. */
+    property int nameTrailingRoom: 0
 
     /* There is stock on the shelf. NOT "can be sold" — see the header. */
     readonly property bool inStock: stock > 0
@@ -107,8 +163,8 @@ QC.AbstractButton {
     // BEHAVIOUR
     // =====================================================================
     hoverEnabled: true
-    implicitWidth: Tokens.size.tileMin
-    implicitHeight: Tokens.size.tile
+    implicitWidth: showImage ? Tokens.size.tileMediaMin : Tokens.size.tileMin
+    implicitHeight: showImage ? Tokens.size.tileMedia : Tokens.size.tile
 
     /* Padding is set here, once, rather than on each label — Control hands
        contentItem exactly the area between its paddings, so this is the single
@@ -228,10 +284,91 @@ QC.AbstractButton {
        tile height to look right at every name length. */
     contentItem: Item {
 
-        Text {
+        /*
+         * The photo band.
+         *
+         * Anchored to the top and given a height of zero when there is no band,
+         * so the name below it can anchor to `media.bottom` unconditionally —
+         * with no band, that IS the top of the face. One anchor, two shapes.
+         *
+         * SQUARE CORNERS, ON PURPOSE. A rounded Rectangle in Qt Quick clips its
+         * children to its bounding box and not to its arcs, so an Image inside a
+         * radius-6 frame paints over all four corners and the rounding is a lie
+         * that only shows at the edges. There is no cheap rounded clip to reach
+         * for — the alternative is a render layer and an OpacityMask per visible
+         * card, on a screen that scrolls forty of them — so the band is a framed
+         * photograph rather than a rounded one, and the frame is what makes that
+         * read as deliberate. The card around it keeps its radius: nothing
+         * overpaints ITS corners.
+         */
+        Item {
+            id: media
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
+            height: tile.showImage ? Tokens.size.tileImage : 0
+            visible: tile.showImage
+
+            Rectangle {
+                id: frame
+                anchors.fill: parent
+                clip: true
+
+                /* The ground under the picture, and the whole of the placeholder:
+                   the category's colour at a low strength, or a neutral step off
+                   the card when a product has no category to borrow from. Also
+                   what is on screen for the frame or two an asynchronous decode
+                   takes, which is why it is a colour and not white. */
+                color: tile.tinted
+                       ? Qt.rgba(tile.accent.r, tile.accent.g, tile.accent.b, 0.14)
+                       : Fluent.subtleTertiary
+                border.width: 1
+                border.color: tile.tinted
+                              ? Qt.rgba(tile.accent.r, tile.accent.g,
+                                        tile.accent.b, 0.35)
+                              : Fluent.dividerBorder
+
+                Icon {
+                    anchors.centerIn: parent
+                    visible: !tile.hasImage
+                    icon: "ic_fluent_image_off_20_regular"
+                    size: Tokens.icon.lg
+                    color: tile.tinted ? tile.accent : Fluent.textTertiary
+                    opacity: 0.45
+                }
+
+                Image {
+                    anchors.fill: parent
+                    visible: tile.hasImage
+                    source: tile.hasImage ? tile.imageSource : ""
+                    /* Fill the band and crop the overflow: a letterboxed photo
+                       leaves two grey bars on every card and turns a wall of
+                       products into a wall of frames. */
+                    fillMode: Image.PreserveAspectCrop
+                    /* Never on the GUI thread: a till that stutters while it
+                       reads forty files off a disk is a till that misses taps. */
+                    asynchronous: true
+                    /* Decoded at twice the card's width and no more. Stored photos
+                       are capped at 640px, and a full-size decode per visible card
+                       is tens of megabytes for pixels no screen shows. Only one
+                       dimension is set — the other follows the aspect ratio, which
+                       is what PreserveAspectCrop needs to crop rather than
+                       stretch. */
+                    sourceSize.width: 2 * Tokens.size.tileMediaMin
+                    mipmap: true
+                }
+            }
+        }
+
+        Text {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            /* Mirrors with the anchor: under LayoutMirroring `right` becomes `left`
+               and the margin travels with it, so the cleared corner is the trailing
+               one in Arabic too. */
+            anchors.rightMargin: tile.nameTrailingRoom
+            anchors.top: media.bottom
+            anchors.topMargin: tile.showImage ? Tokens.spacing.sm : 0
             height: Tokens.size.tileName
 
             text: tile.name

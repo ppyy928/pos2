@@ -40,7 +40,17 @@ import Mizan
  * shop's scanner, or a name that overflows a 40mm label, and both look fine on
  * paper until someone tries to scan it at the till. The picture is the same
  * `render_label_image` call the print path makes, so what is on screen is what the
- * printer receives — one render earlier.
+ * printer receives — one render earlier. When the bars had to be squeezed to fit
+ * the label, it says so under the picture rather than letting the till find out.
+ *
+ * THE TWO DESIGNS
+ *
+ * `classic_side` puts the price rotated in a band down the right-hand edge;
+ * `bottom_price` puts it large along the bottom. Both print the same elements, so
+ * the choice is one of shape, and the picture above the picker is the whole
+ * argument for either. It is a setting rather than a per-print option — a shop
+ * prints one shape of shelf label — which is why the settings page shows the same
+ * choice and the older front end prints the same sticker.
  *
  * WHAT CANNOT BE LABELLED
  *
@@ -79,6 +89,17 @@ AppDialog {
     property int categoryId: context && context.category_id ? context.category_id : 0
 
     property string notice: ""
+
+    /* The designs the engine draws, in its own order. Their labels come from the
+       catalogue; the keys never do. */
+    readonly property var formats: ctrl ? ctrl.labelFormats : []
+
+    readonly property var formatLabels: {
+        var out = []
+        for (var i = 0; i < formats.length; i++)
+            out.push(Strings.t("barcode.tpl." + formats[i], formats[i]))
+        return out
+    }
 
     readonly property int totalLabels: {
         var n = 0
@@ -193,6 +214,25 @@ AppDialog {
             return
         }
         ctrl.previewLabel(queue[at])
+    }
+
+    // -- the shape it is printed in ----------------------------------------
+    function formatIndex() {
+        var current = ctrl ? ctrl.labelFormat : ""
+        for (var i = 0; i < formats.length; i++)
+            if (formats[i] === current)
+                return i
+        return 0
+    }
+
+    function chooseFormat(index) {
+        if (!ctrl || index < 0 || index >= formats.length)
+            return
+        if (formats[index] === ctrl.labelFormat)
+            return
+        ctrl.setLabelFormat(formats[index])
+        /* Re-render at once: the picture is the entire reason to choose. */
+        show(shownId)
     }
 
     /* Not print: QML reserves that name — a unction print() on an item is an
@@ -398,6 +438,49 @@ AppDialog {
                     }
                 }
 
+                // -- what the printer had to give up to fit the bars on
+                Text {
+                    Layout.fillWidth: true
+                    visible: dialog.ctrl && dialog.ctrl.previewDegraded
+                    text: Strings.t("barcode.degraded",
+                                    "The barcode was squeezed to fit this label size — test one scan before printing the shelf.")
+                    wrapMode: Text.WordWrap
+                    font.family: Tokens.font.family
+                    font.pixelSize: Tokens.font.caption
+                    color: Tokens.warning
+                }
+
+                // -- which of the two shapes it is printed in
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Tokens.spacing.sm
+
+                    Text {
+                        text: Strings.t("barcode.format", "Label design")
+                        font.family: Tokens.font.family
+                        font.pixelSize: Tokens.font.overline
+                        font.weight: Font.DemiBold
+                        font.capitalization: Font.AllUppercase
+                        font.letterSpacing: 1.1
+                        color: Fluent.textTertiary
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    Segmented {
+                        id: design
+                        items: dialog.formatLabels
+
+                        /* Segmented assigns its own currentIndex from a MouseArea,
+                           which would destroy a binding placed on it — the same
+                           trap LoginPage's language picker documents. So the link
+                           to the setting runs imperatively both ways; assigning an
+                           unchanged value emits nothing, so it converges. */
+                        onCurrentIndexChanged: dialog.chooseFormat(currentIndex)
+                        Component.onCompleted: currentIndex = dialog.formatIndex()
+                    }
+                }
+
                 // -- the sheet
                 RowLayout {
                     Layout.fillWidth: true
@@ -518,13 +601,14 @@ AppDialog {
                                                                 line.modelData.copies - 1)
                                 }
 
-                                QC.TextField {
+                                NumberField {
                                     Layout.preferredWidth: 56
                                     Layout.preferredHeight: Tokens.size.controlSmall
                                     text: String(line.modelData.copies)
                                     horizontalAlignment: TextInput.AlignHCenter
+                                    /* A count of sheets, so whole numbers only —
+                                       half a label is not a thing to print. */
                                     inputMethodHints: Qt.ImhDigitsOnly
-                                    font.family: Tokens.font.family
                                     font.pixelSize: Tokens.font.body
                                     onEditingFinished: dialog.setCopies(
                                         line.modelData.id, parseInt(text) || 1)

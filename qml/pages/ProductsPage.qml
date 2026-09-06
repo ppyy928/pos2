@@ -394,7 +394,7 @@ Item {
                                    "Your catalogue, stock levels and prices.")
 
             /*
-             * FLAT, NOT AN OVERFLOW MENU.
+             * FLAT, NOT AN OVERFLOW MENU — AND EVERY BUTTON SAYS ITS NAME.
              *
              * Six of these used to live behind a "More" button — categories, units,
              * multi-units, barcode labels, import, export — and one thing that did
@@ -403,11 +403,16 @@ Item {
              * So the page hid the six things that are about the catalogue and
              * promoted the one thing that is not.
              *
-             * They are all here now, and the row still fits a 1366px screen because
-             * the labels are spent where the word is doing work: on the three that
-             * open a manager an owner goes looking for by name. Import and export
-             * are a pair of conventional arrows with tooltips — occasional, and
-             * unmistakable as a pair.
+             * The last three were then icon-only, on the theory that a ledger, an
+             * import and an export are occasional and their glyphs conventional. They
+             * were not: three bare glyphs at the end of a row of named buttons read as
+             * window chrome, and a tooltip is not a label — it is a label you have to
+             * hover to find. They carry their words now. Everything on this row is one
+             * kind of thing, so it looks like one kind of thing.
+             *
+             * The words are kept short (VAT, Import, Export) so the row still fits a
+             * 1366px screen; past that PageHeader drops the whole block onto its own
+             * line rather than clipping the last button.
              *
              * `products.multi_units` is not here: the product record owns its own
              * packs now, so a second global editor for them would be two doors to
@@ -434,6 +439,15 @@ Item {
                     text: Strings.t("units.title", "Units")
                     onClicked: root.requestOpen("units", {})
                 },
+                /* The rates a product can name. Here rather than in the rail: a rate is
+                   `products.tax_id`, chosen in the product form, so it belongs with the
+                   other lists a product points at — and a list of three percentages that
+                   changes once a year is not a place work happens. */
+                GlyphButton {
+                    glyph: "ic_fluent_receipt_20_regular"
+                    text: Strings.t("taxes.short", "VAT")
+                    onClicked: root.requestOpen("taxes", {})
+                },
                 GlyphButton {
                     glyph: "ic_fluent_barcode_scanner_20_regular"
                     text: Strings.t("products.hdr.barcode", "Barcode labels")
@@ -456,23 +470,20 @@ Item {
                     enabled: root.canManage
                     onClicked: root.requestOpen("stock_count", {})
                 },
-                IconButton {
+                GlyphButton {
                     glyph: "ic_fluent_history_20_regular"
-                    glyphSize: Tokens.icon.md
-                    tooltip: Strings.t("stock.ledger", "Stock ledger")
+                    text: Strings.t("stock.ledger", "Stock ledger")
                     onClicked: root.requestOpen("stock_ledger", {})
                 },
-                IconButton {
+                GlyphButton {
                     glyph: "ic_fluent_arrow_import_20_regular"
-                    glyphSize: Tokens.icon.md
-                    tooltip: Strings.t("import.title", "Import")
+                    text: Strings.t("import.title", "Import")
                     enabled: root.canManage
                     onClicked: root.requestOpen("products_import", {})
                 },
-                IconButton {
+                GlyphButton {
                     glyph: "ic_fluent_arrow_export_20_regular"
-                    glyphSize: Tokens.icon.md
-                    tooltip: Strings.t("reports.export", "Export")
+                    text: Strings.t("reports.export", "Export")
                     onClicked: root.requestOpen("products_export", {})
                 }
             ]
@@ -817,15 +828,18 @@ Item {
 
         /* The name on its own line rather than interpolated into the question:
            a product called "500 g" inside a sentence is ambiguous, and on its
-           own line it is not. It also means the catalogue string needs no
-           placeholder and cannot be mis-formatted by a translation. */
+           own line it is not.
+
+           `confirm.delete_product.body` is not that sentence, though — the catalogue's
+           text is 'Delete "{name}" permanently?', so read through `t()` it put a
+           literal {name} on screen above the name it was meant to carry. This uses a
+           key with nothing to substitute, which is what the layout was designed for. */
         contentItem: Column {
             spacing: Tokens.spacing.sm
 
             Text {
                 width: confirmDelete.measure
-                text: Strings.t("confirm.delete_product.body",
-                                "This cannot be undone.")
+                text: Strings.t("confirm.irreversible", "This cannot be undone.")
                 wrapMode: Text.WordWrap
                 color: Fluent.textPrimary
                 font.pixelSize: Tokens.font.body

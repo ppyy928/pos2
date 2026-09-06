@@ -31,9 +31,10 @@ import Mizan
  *
  * WHY THE BROWSE LIST IS A POPUP INSIDE THIS COMPONENT
  *
- * It cannot be a workflow dialog: DialogHost shows one at a time, so opening a
- * picker from inside the stocktake would destroy the stocktake. It is the same list
- * as the dropdown, given room — one data path, two presentations.
+ * It is not a workflow dialog: a picker is part of whatever screen is asking, not a
+ * destination of its own with a key and a permission, and it answers by assigning a
+ * property rather than by emitting into the router. It is the same list as the
+ * dropdown, given room — one data path, two presentations.
  *
  * SCANNING
  *
@@ -123,8 +124,12 @@ Item {
             onAccepted: finder.accepted(text)
         }
 
+        /* `open` — a frame with an arrow leaving its corner — because what this does
+           is open the browse window below, and the bullet list it used to draw named
+           the contents of that window instead of the act of opening it. Same glyph on
+           the till's own picker button, so the shape means one thing everywhere. */
         IconButton {
-            glyph: "ic_fluent_apps_list_20_regular"
+            glyph: "ic_fluent_open_20_regular"
             glyphSize: Tokens.icon.md
             enabled: finder.enabled
             tooltip: Strings.t("selector.open_picker", "Browse all products")

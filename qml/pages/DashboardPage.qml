@@ -150,7 +150,7 @@ Item {
             },
             {
                 key: "customer",
-                workflow: "customer_form",
+                workflow: "customer_edit",
                 context: ({}),
                 icon: "ic_fluent_person_add_20_regular",
                 label: Strings.t("customers.add", "New customer"),

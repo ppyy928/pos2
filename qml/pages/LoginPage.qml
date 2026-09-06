@@ -8,14 +8,14 @@ import Mizan
  * The front door.
  *
  *   ┌────────────────────────────────────────────────┐
- *   │ ▣ MIZAN POS                                    │  wordmark, over the photo
+ *   │ ▣ MIZAN POS                                    │  wordmark, over the backdrop
  *   │                                                │
- *   │                ┌──────────────┐                │
- *   │   a market     │  Store Login │                │
- *   │   street at    │  [username]  │                │  one card, one column
- *   │   dusk, out    │  [password]  │                │
- *   │   of focus     │  [ Login   ] │                │
- *   │                │  En Fr ع     │                │
+ *   │      ___       ┌──────────────┐                │
+ *   │     |o o|      │  Store Login │                │
+ *   │     |___|      │  [username]  │                │  one card, one column
+ *   │      / \       │  [password]  │                │
+ *   │   a counter    │  [ Login   ] │                │
+ *   │   terminal     │  En Fr ع     │                │
  *   │                └──────────────┘                │
  *   │ Version 2.4                                    │
  *   └────────────────────────────────────────────────┘
@@ -23,51 +23,53 @@ import Mizan
  * WHAT CHANGED, AND WHY
  *
  * This was a 1040x640 card split into a white form panel and a dark brand panel
- * carrying a hand-drawn shopping bag (Mizan's BrandArt, a Canvas composition).
+ * carrying a hand-drawn shopping bag (a Canvas composition, since deleted).
  * That layout existed to work around a real constraint — a flush two-pane split
  * cannot be done here, because `clip: true` on a rounded Rectangle clips
  * rectangularly and a square-cornered pane pokes out through the rounded corner —
  * and the workaround was a panel floating inside a card, which is two nested
  * surfaces to say one thing.
  *
- * A photograph removes the problem instead of routing around it. The image is the
- * whole window, so there are no panes to align and no corners to reconcile; the
- * form is one card in the middle of it; and the brand mark moves out onto the
- * photograph where it has room. One surface, one column, no illustration to keep
- * in step with the product.
+ * Dropping the split panel removed that problem: the backdrop is the whole window,
+ * so there are no panes to align and no corners to reconcile; the form is one card
+ * in the middle of it; and the brand mark moves out onto the backdrop where it has
+ * room.
  *
- * BrandArt is now unreferenced. It is left in Mizan rather than deleted — it is a
- * registered component and removing it is a separate decision from this one.
+ * The Canvas that drew the bag is gone with it: hand-drawing the mark is the thing
+ * being replaced, and a file nothing referenced was one more place to look.
  *
- * THE PHOTOGRAPH
+ * THE BACKDROP
  *
- * `assets/login-bg.jpg` — a market street at dusk, CC0, blurred and compressed at
- * build time. Provenance, licence and the exact processing are in
- * assets/CREDITS.md. Two things about it matter here:
+ * The gradient, plus one illustration beside the card: `assets/storefront.svg` — a
+ * shop, seen from the pavement. Awning, sign, stocked window, open door, crates out
+ * front. Drawn here rather than borrowed, in the app's own palette; provenance and the
+ * reason the colours are baked into the file are in assets/CREDITS.md.
  *
- *   THE BLUR IS IN THE FILE.  There is no run-time blur in this build:
- *   QtQuick.Effects / MultiEffect is not verified present, which is why nothing in
- *   FluentPySide has a shadow either. So the softening is baked in.
+ * It replaces a stock drawing of a phone being tapped on a card reader (unDraw's
+ * "Mobile payments"), which was itself a replacement for a blurred photograph of a
+ * market street. Both were about paying; neither was about a shop. The people who log
+ * into this are standing behind a counter in one, and a picture of the thing they are
+ * standing in is the only one that says "this is your shop's till" before a single word
+ * is read. The photograph had a second problem: the blur was baked into the file
+ * because this build has no run-time blur (QtQuick.Effects / MultiEffect is not
+ * verified present, which is why nothing in FluentPySide has a shadow either), and it
+ * cost 178KB of JPEG against 6KB of vector.
  *
- *   THE DARKENING IS NOT.  The scrim below is QML, so it can be retuned without
- *   re-encoding a photograph — and it is what guarantees the wordmark and the
- *   version stamp stay legible over whichever image is dropped in.
+ * The scrim stays QML, so the darkening can be retuned for a theme without touching
+ * an asset; it is what keeps the wordmark and the version stamp legible.
  *
- * A missing or unreadable file falls back to the gradient this screen used before,
- * because a login screen that cannot be logged into is the one failure it may not
- * have.
+ * A missing or unreadable asset leaves the gradient, because a login screen that
+ * cannot be logged into is the one failure it may not have.
  *
  * DEPTH WITHOUT SHADOWS
  *
  * Unchanged from the port: FluentPySide has no shadow idiom anywhere, so the card
- * separates from the photograph with surface contrast, a 1px border and a rim
- * highlight along its top edge. Over a photograph that is now doing more work than
- * it was over a flat gradient, which is why the scrim under the card is opaque
- * enough to give it a consistent ground.
+ * separates from the backdrop with surface contrast, a 1px border and a rim
+ * highlight along its top edge.
  *
  * Card surfaces come from Tokens.login* rather than Fluent.cardBackground: those
- * are translucent by design — they are meant to sit over Mica — and over a
- * photograph a translucent card is an unreadable card.
+ * are translucent by design — they are meant to sit over Mica — and a translucent
+ * card over anything with contrast in it is an unreadable card.
  */
 Item {
     id: page
@@ -186,9 +188,9 @@ Item {
     // ------------------------------------------------------------------------
     // Backdrop
     // ------------------------------------------------------------------------
-    /* Under the photograph, not instead of it: this is what shows through while a
-       178KB JPEG decodes on the loader thread, and what remains if the file is
-       gone. It is the gradient this screen used before. */
+    /* The whole window, and now the only backdrop: the gradient this screen was
+       designed around. What sits on it is a drawing of the thing this program is,
+       not a photograph of a street it might stand in. */
     Rectangle {
         anchors.fill: parent
         gradient: Gradient {
@@ -198,54 +200,81 @@ Item {
         }
     }
 
+    /*
+     * The illustration: the shop this till stands in.
+     *
+     * A storefront — awning, sign board, a window with stock on the shelves, an open
+     * door, crates on the pavement. What was here before was a stock drawing of a card
+     * being tapped and, before that, a blurred market street: one said "paying
+     * happens", the other said "somewhere busy", and neither said "this is your shop".
+     * The person logging in is standing in the thing on the left.
+     *
+     * `assets/storefront.svg`, drawn for this screen in the app's own palette: light
+     * shapes and brand emerald, nothing darker than the sign board, because the file's
+     * colours are what get drawn — QML cannot tint an SVG's internals at run time — and
+     * anything near-black would disappear into the bottom of the gradient. Provenance in
+     * assets/CREDITS.md.
+     *
+     * It sits on the LEADING side, beside the card, never behind it: on a narrow
+     * window there is no room for both, and a picture under a login form is a
+     * picture nobody sees. `anchors.left` is mirrored to the right in Arabic by the
+     * root's LayoutMirroring, so there is nothing to reverse by hand.
+     */
     Image {
-        id: backdrop
-        anchors.fill: parent
-        source: "../assets/login-bg.jpg"
-        /* Crop, never letterbox: a band of gradient down one side of a photograph
-           reads as a broken image. The photograph's subject is its centre, which is
-           what survives a crop at any window shape. */
-        fillMode: Image.PreserveAspectCrop
-        /* Decoded off the GUI thread — this is the first screen the process shows,
-           and a synchronous 1920px decode is a visible stall at startup. */
+        id: artwork
+        objectName: "loginArtwork"
+
+        /* Space on one side of the centred card, less the gutters. Below `minRoom`
+           the illustration is not shrunk into a smudge — it is dropped. */
+        readonly property real sideRoom:
+            (page.width - page.cardWidth) / 2 - page.gutter * 2
+        readonly property real minRoom: 260
+
+        source: "../assets/storefront.svg"
+        visible: sideRoom >= minRoom
+        anchors.left: parent.left
+        anchors.leftMargin: page.gutter
+        anchors.verticalCenter: parent.verticalCenter
+        /* Nudged up by the version stamp's band so the pavement does not sit in the
+           darkest part of the scrim. */
+        anchors.verticalCenterOffset: -Tokens.size.command / 2
+
+        width: Math.min(520, Math.max(0, sideRoom))
+        fillMode: Image.PreserveAspectFit
+        /* An SVG is rasterised at `sourceSize`, so it is given twice the width it is
+           ever drawn at: Qt then downscales, which is the case its default filtering
+           handles well, and the raster stays sharp on a 2x display. */
+        sourceSize.width: 1040
         asynchronous: true
         cache: true
-        /* No `smooth: false`, no sourceSize: the file is 1920 wide and the window
-           is smaller than that, so Qt is downscaling, which is the case its default
-           filtering is good at. */
-        opacity: status === Image.Ready ? 1 : 0
+        opacity: status === Image.Ready && visible ? 1 : 0
         Behavior on opacity {
             NumberAnimation { duration: Fluent.anim.speed }
         }
     }
 
     /*
-     * The scrim, in two layers.
+     * The scrim: one layer now, not two.
      *
-     * A flat tint sets the floor — how dark the lightest part of any photograph is
-     * allowed to be — and a gradient darkens the top and bottom bands, which is
-     * where the wordmark and the version stamp sit. Doing it in one gradient would
-     * mean the middle of a bright photograph stays bright, and the middle is where
-     * the card goes.
+     * The flat tint that used to sit here existed to put a floor under a photograph
+     * — to cap how bright its lightest part could be. There is no photograph to cap
+     * any more, and over a gradient it only muddied the brand colour. What remains
+     * is the top-and-bottom darkening, which is what keeps the wordmark and the
+     * version stamp legible; both live in bands where the gradient is at its
+     * lightest.
      */
     Rectangle {
         anchors.fill: parent
-        color: Tokens.loginTo
-        opacity: 0.34
-    }
-
-    Rectangle {
-        anchors.fill: parent
         gradient: Gradient {
-            GradientStop { position: 0.0;  color: Qt.rgba(0, 0, 0, 0.50) }
-            GradientStop { position: 0.32; color: Qt.rgba(0, 0, 0, 0.10) }
-            GradientStop { position: 0.74; color: Qt.rgba(0, 0, 0, 0.18) }
-            GradientStop { position: 1.0;  color: Qt.rgba(0, 0, 0, 0.60) }
+            GradientStop { position: 0.0;  color: Qt.rgba(0, 0, 0, 0.42) }
+            GradientStop { position: 0.32; color: Qt.rgba(0, 0, 0, 0.06) }
+            GradientStop { position: 0.74; color: Qt.rgba(0, 0, 0, 0.12) }
+            GradientStop { position: 1.0;  color: Qt.rgba(0, 0, 0, 0.52) }
         }
     }
 
     // ------------------------------------------------------------------------
-    // Wordmark, over the photograph
+    // Wordmark, over the backdrop
     // ------------------------------------------------------------------------
     RowLayout {
         id: wordmark

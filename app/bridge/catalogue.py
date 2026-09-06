@@ -5,12 +5,23 @@ Products screen links to that are not a product.
 
     categories()            list with product counts
     saveCategory(name, colour, id) / deleteCategory(id, reassignTo)
-    reorderCategories(ids) / setCategoryVisibility(id, show)
-    units() / saveUnit(name, abbreviation, id) / deleteUnit(id)
+    reorderCategories(ids)
+    units() / saveUnit(name, id) / deleteUnit(id)
     multiUnits(productId) / saveMultiUnit(data, id) / deleteMultiUnit(id)
     productsInCategory(id) / reorderProducts(id, ids)
     favorites() / setFavorite(id, on) / reorderFavorites(ids) / clearFavorites()
     exportProducts(path)
+
+    csvPreview(path) / importProducts(path, mapping, policy)
+    importFields, importing, progress          <- the CSV import, on a pool thread
+
+WHAT AN IMPORT DOES WITH AN INCOMPLETE ROW
+------------------------------------------
+It keeps it, whole, in `product_drafts` — and the outcome says how many. Nothing
+is invented: the old importer gave a barcode-less row a made-up code and wrote
+0.00 into both price columns, which produced products that could not be scanned
+and sold for nothing. `db.product_gaps` is the rule and `db.import_products` does
+the routing; this controller only carries the numbers back.
 
 DELETING A CATEGORY NEVER ORPHANS A PRODUCT
 -------------------------------------------
@@ -31,8 +42,16 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from PySide6.QtCore import Property, QObject, Signal, Slot
+from PySide6.QtCore import (
+    Property,
+    QObject,
+    QRunnable,
+    QThreadPool,
+    Signal,
+    Slot,
+)
 
+from .. import diagnostics
 from . import fmt, interop, legacy
 
 
@@ -41,10 +60,35 @@ class Catalogue(QObject):
     rejected = Signal(str)
     exported = Signal(str, int)
     imported = Signal("QVariant")
+    #: An import is running / how far through it is. Two properties rather than
+    #: one, because "busy" disables the button and "43%" is what the operator
+    #: reads — and a hundred thousand rows is long enough that they will look.
+    importingChanged = Signal()
+    progressChanged = Signal()
+
+    #: The pool thread's way back onto the GUI thread. Private by convention:
+    #: `_ImportTask` is the only emitter and `_import_settled` the only receiver.
+    #: A signal and not a direct call, because a QRunnable finishes on a pool
+    #: thread and everything a Property notifies must move on this one.
+    _importFinished = Signal("QVariant", str)
 
     def __init__(self, i18n: QObject, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._i18n = i18n
+        self._importing = False
+        self._progress = 0
+        #: Held, not auto-deleted — see Auth.login for why a QRunnable handed to
+        #: the pool as a temporary is a dangling pointer waiting to happen.
+        self._task: QRunnable | None = None
+        self._importFinished.connect(self._import_settled)
+
+    @Property(bool, notify=importingChanged)
+    def importing(self) -> bool:
+        return self._importing
+
+    @Property(int, notify=progressChanged)
+    def progress(self) -> int:
+        return self._progress
 
     # =====================================================================
     # CATEGORIES
@@ -116,21 +160,6 @@ class Catalogue(QObject):
             return
         self.changed.emit()
 
-    @Slot(int, bool, result=int)
-    def setCategoryVisibility(self, category_id: int, show: bool) -> int:
-        """Hide or show a whole category on the till at once — pos returns how
-        many products it touched, and the screen says so."""
-        database = self._database()
-        if database is None:
-            return 0
-        try:
-            count = database.set_category_visibility(int(category_id), bool(show))
-        except Exception as exc:  # noqa: BLE001
-            self.rejected.emit(str(exc))
-            return 0
-        self.changed.emit()
-        return int(count or 0)
-
     # =====================================================================
     # UNITS
     # =====================================================================
@@ -149,8 +178,16 @@ class Catalogue(QObject):
             self.rejected.emit(str(exc))
             return []
 
-    @Slot(str, str, int)
-    def saveUnit(self, name: str, abbreviation: str, unit_id: int) -> None:
+    @Slot(str, int)
+    def saveUnit(self, name: str, unit_id: int) -> None:
+        """Add or rename a unit. A unit is its name — nothing else is asked for.
+
+        pos's `units` table also carries a short code, which used to be a second
+        field on this screen and is now nobody's business: the one place it was
+        read is the stock cell on a product row, and that falls back to the name
+        (`fetch_products`). An existing code is left exactly as it was rather
+        than blanked, so a shop that already typed KG keeps seeing KG.
+        """
         clean = (name or "").strip()
         if not clean:
             self.rejected.emit(self._i18n.text("units.name.required"))
@@ -159,12 +196,24 @@ class Catalogue(QObject):
         if database is None:
             return
         try:
-            database.save_unit(clean, (abbreviation or "").strip(),
+            database.save_unit(clean, self._unit_code(database, int(unit_id)),
                                int(unit_id) or None)
         except Exception as exc:  # noqa: BLE001
             self.rejected.emit(str(exc))
             return
         self.changed.emit()
+
+    def _unit_code(self, database, unit_id: int) -> str:
+        """The short code already stored for this unit, or "" for a new one."""
+        if not unit_id:
+            return ""
+        try:
+            for row in database.fetch_units():
+                if int(row["id"]) == unit_id:
+                    return str(row.get("abbreviation") or "")
+        except Exception:  # noqa: BLE001
+            return ""
+        return ""
 
     @Slot(int)
     def deleteUnit(self, unit_id: int) -> None:
@@ -363,16 +412,23 @@ class Catalogue(QObject):
     # IMPORT
     # =====================================================================
     #: The fields import_products can be handed, in the order the dialog shows
-    #: them. `name` is the only one it cannot do without.
+    #: them.
+    #:
+    #: `required` is gone from this list and it is not an oversight. The importer
+    #: used to refuse a row with no name and accept everything else, writing 0.00
+    #: into both price columns — so the only field it insisted on was the one it
+    #: could not put a placeholder in. Now `db.product_gaps` decides, a row that is
+    #: short of anything goes to the waiting room whole, and the only column the
+    #: DIALOG still needs is one to identify rows by: a name or a barcode.
     FIELDS = ("name", "barcode", "purchase_price", "sale_price", "stock",
-              "low_stock_threshold", "category")
+              "low_stock_threshold", "category", "unit")
 
     @Property("QVariantList", constant=True)
     def importFields(self) -> list:
         return [
             {"key": key,
              "label": self._i18n.text(f"import.field.{key}"),
-             "required": key == "name"}
+             "required": key in ("name", "barcode")}
             for key in self.FIELDS
         ]
 
@@ -422,13 +478,28 @@ class Catalogue(QObject):
 
     @Slot(str, "QVariant", str)
     def importProducts(self, path: str, mapping: object, policy: str) -> None:
-        """Run the import. `mapping` is {field: column index}.
+        """Run the import, on a pool thread. `mapping` is {field: column index}.
 
         The policy is pos's: an existing barcode is either skipped or updated.
         There is no third option on purpose — a file that half-matches the
         catalogue is the normal case, and silently creating duplicates of the
         matches is the one outcome nobody wants.
+
+        OFF THE GUI THREAD, WHICH IT WAS NOT
+        ------------------------------------
+        This used to call `db.import_products` inline and pass no `progress_cb`, so
+        the hook the data layer offers was dead and a large file froze the window
+        with nothing on screen to say why. A hundred thousand rows is the size this
+        feature exists for. Same shape as `Auth.login` and the receipt printer: a
+        held `QRunnable`, a private signal to come back on, and `busy` to stop a
+        second run being queued behind the first.
+
+        `progress` is a figure and not a spinner because the operator has to be
+        able to tell "working" from "hung", and at this row count that is a
+        distinction they will actually need to make.
         """
+        if self._importing:
+            return
         target = self._localPath(path)
         if not target:
             return
@@ -440,7 +511,10 @@ class Catalogue(QObject):
                 continue
             if position >= 0:
                 columns[str(key)] = position
-        if "name" not in columns:
+        # A name or a barcode — one of the two, because a row has to be
+        # identifiable to be worth keeping. Not both: a barcode catalogue with no
+        # names is a real file, and so is a price list with no codes.
+        if "name" not in columns and "barcode" not in columns:
             self.rejected.emit(self._i18n.text(
                 "import.name.required",
                 "Choose which column holds the product name."))
@@ -449,23 +523,43 @@ class Catalogue(QObject):
         database = self._database()
         if database is None:
             return
-        try:
-            result = database.import_products(
-                str(target), columns,
-                "update" if policy == "update" else "skip")
-        except Exception as exc:  # noqa: BLE001
-            self.rejected.emit(str(exc))
-            return
+        self._set_importing(True)
+        self._set_progress(0)
+        self._task = _ImportTask(self, str(target), columns,
+                                 "update" if policy == "update" else "skip")
+        self._task.setAutoDelete(False)
+        QThreadPool.globalInstance().start(self._task)
 
-        payload = dict(result)
+    def _import_settled(self, result: object, error: str) -> None:
+        """Back on the GUI thread, whichever way it went."""
+        self._set_importing(False)
+        self._set_progress(100 if not error else 0)
+        if error:
+            self.rejected.emit(error)
+            return
+        payload = dict(result or {})
         payload["errors"] = [
             {"row": str(entry.get("row") or ""),
              "reason": str(entry.get("reason") or "")}
             for entry in (payload.get("errors") or [])
         ]
         payload["error_count"] = len(payload["errors"])
+        payload["drafted"] = int(payload.get("drafted") or 0)
         self.imported.emit(payload)
         self.changed.emit()
+
+    def _set_importing(self, value: bool) -> None:
+        if self._importing == value:
+            return
+        self._importing = value
+        self.importingChanged.emit()
+
+    def _set_progress(self, value: int) -> None:
+        value = max(0, min(100, int(value)))
+        if self._progress == value:
+            return
+        self._progress = value
+        self.progressChanged.emit()
 
     def _localPath(self, path: str) -> str:
         """A QML FileDialog hands back a file: URL; everything below wants a path."""
@@ -544,3 +638,45 @@ class Catalogue(QObject):
         except Exception as exc:  # noqa: BLE001
             self.rejected.emit(str(exc))
             return None
+
+
+class _ImportTask(QRunnable):
+    """One CSV import, on a pool thread.
+
+    The progress callback is throttled to whole percent, not because the emit is
+    expensive but because a queued cross-thread signal per row is a hundred
+    thousand events the GUI thread has to drain — which would make the progress bar
+    the reason the window is slow.
+    """
+
+    def __init__(self, owner: Catalogue, path: str,
+                 columns: dict[str, int], policy: str) -> None:
+        super().__init__()
+        self._owner = owner
+        self._path = path
+        self._columns = columns
+        self._policy = policy
+        self._last = -1
+
+    def _progress(self, percent: int) -> None:
+        if percent == self._last:
+            return
+        self._last = percent
+        # A method call across threads: `_set_progress` only touches an int and
+        # emits, and a Qt signal emission is thread-safe. The receiving side is a
+        # binding, which Qt re-evaluates on the GUI thread.
+        self._owner._set_progress(percent)
+
+    def run(self) -> None:
+        try:
+            database = legacy.database()
+            result = database.import_products(
+                self._path, self._columns, self._policy, self._progress)
+        except Exception as exc:  # noqa: BLE001
+            # Anything from a missing file to a locked database. It has to reach the
+            # operator: a silent exception on a pool thread would leave the dialog
+            # saying "Importing…" for the rest of the shift.
+            diagnostics.log.exception("import failed: path=%r", self._path)
+            self._owner._importFinished.emit(None, str(exc))
+            return
+        self._owner._importFinished.emit(result, "")

@@ -166,12 +166,10 @@ AppDialog {
             Field {
                 label: Strings.t("qproduct.sale", "Sale price")
 
-                QC.TextField {
+                NumberField {
                     id: sale
                     Layout.fillWidth: true
                     Layout.preferredHeight: Tokens.size.control
-                    inputMethodHints: Qt.ImhFormattedNumbersOnly
-                    font.family: Tokens.font.family
                     font.pixelSize: Tokens.font.body
                     onAccepted: dialog.save()
                 }
@@ -180,12 +178,10 @@ AppDialog {
             Field {
                 label: Strings.t("qproduct.purchase", "Purchase price")
 
-                QC.TextField {
+                NumberField {
                     id: purchase
                     Layout.fillWidth: true
                     Layout.preferredHeight: Tokens.size.control
-                    inputMethodHints: Qt.ImhFormattedNumbersOnly
-                    font.family: Tokens.font.family
                     font.pixelSize: Tokens.font.body
                     onAccepted: dialog.save()
                 }
@@ -194,12 +190,10 @@ AppDialog {
             Field {
                 label: Strings.t("qproduct.stock", "Opening quantity")
 
-                QC.TextField {
+                NumberField {
                     id: stock
                     Layout.fillWidth: true
                     Layout.preferredHeight: Tokens.size.control
-                    inputMethodHints: Qt.ImhFormattedNumbersOnly
-                    font.family: Tokens.font.family
                     font.pixelSize: Tokens.font.body
                     onAccepted: dialog.save()
                 }

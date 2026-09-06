@@ -72,14 +72,20 @@ Item {
      * pencil then had to be used to correct. Both opened the same record, so the
      * record is now one screen and `edit` is how it is reached — which also means
      * `edit` is not gated on the manage right any more: looking is what
-     * `customers.view` allows, and the dialog gates its own Save.
+     * `customers.view` allows, and the record gates its own editor.
      *
      * `pay` is still its own icon because it is the errand, not a way of looking at
      * the account: it lands on the payments section with the amount focused.
      */
     readonly property var rowActions: [
         { id: "edit" },
-        { id: "pay", enabled: function (row) { return root.canManage && row.owes } }
+        { id: "pay", enabled: function (row) { return root.canManage && row.owes } },
+        /* The bin is only ever offered on an EMPTY account. `deletable` is decided by
+           the query that filled this list — no sale, no payment, nothing owed — so a
+           customer with history shows a dimmed icon instead of a refusal the operator
+           has to press to discover. Deleting one that HAS history is not on offer at
+           any level: an invoice that loses its customer is a debt nobody owes. */
+        { id: "delete", enabled: function (row) { return root.canManage && row.deletable } }
     ]
 
     function reload() {
@@ -103,6 +109,11 @@ Item {
         else if (action === "pay")
             requestOpen("customer_form", { customer_id: data.id,
                                            section: "payments" })
+        else if (action === "delete") {
+            confirmDelete.customerId = data.id
+            confirmDelete.customerName = data.name
+            confirmDelete.open()
+        }
     }
 
     function requestOpen(key, context) {
@@ -177,7 +188,9 @@ Item {
                     text: Strings.t("customers.add", "New customer")
                     highlighted: true
                     enabled: root.canManage
-                    onClicked: root.requestOpen("customer_form", {})
+                    /* The form, not the record: a customer who does not exist yet
+                       has no balance and no history to show. */
+                    onClicked: root.requestOpen("customer_edit", {})
                 }
             ]
         }
@@ -295,6 +308,46 @@ Item {
                 root.pageSize = size
                 root.currentPage = 1
                 root.reload()
+            }
+        }
+    }
+
+    /* Only ever an empty account, so the confirmation is short and names the record:
+       what it has to guard against is the wrong row, not a lost history. */
+    FluentDialog {
+        id: confirmDelete
+
+        property int customerId: -1
+        property string customerName: ""
+        readonly property int measure: 460
+
+        modal: true
+        title: Strings.t("customers.delete.title", "Delete this customer?")
+        standardButtons: QC.Dialog.Yes | QC.Dialog.No
+
+        onAccepted: if (root.ctrl) root.ctrl.remove(confirmDelete.customerId)
+
+        contentItem: Column {
+            spacing: Tokens.spacing.sm
+
+            Text {
+                width: confirmDelete.measure
+                text: Strings.t("customers.delete.body",
+                                "Nothing is recorded against this account, so nothing is lost with it.")
+                wrapMode: Text.WordWrap
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.body
+                color: Fluent.textPrimary
+            }
+
+            Text {
+                width: confirmDelete.measure
+                text: confirmDelete.customerName
+                wrapMode: Text.WordWrap
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.body
+                font.weight: Font.DemiBold
+                color: Fluent.textPrimary
             }
         }
     }

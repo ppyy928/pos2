@@ -9,6 +9,12 @@ venv/
 # Screenshots written by tools/dialog_shots.py — regenerated on demand, never reviewed
 tools/shots/
 
+# Diagnostics written by app/diagnostics.py at every launch — never reviewed
+logs/
+
+# AI-tool working files (session plans, before/after screenshots)
+.zcode/
+
 # OS
 Thumbs.db
 .DS_Store

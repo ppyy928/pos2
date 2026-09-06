@@ -60,6 +60,20 @@ Rectangle {
     property string totalText: "—"
     property string currencyText: ""
 
+    /*
+     * What has been paid on this document, and what is left. Empty on a document that
+     * has not been settled yet — a NEW invoice has nothing paid, and a "Paid 0.00"
+     * column on a blank form is a fake reading rather than an answer. `pos`'s purchase
+     * footer hides the same two columns for the same reason.
+     */
+    property string paidText: ""
+    property string remainingText: ""
+
+    /* Whether the remaining figure is money still owed. The caller knows; the dock
+       cannot tell from a formatted string, and "0.00" is good news rather than a
+       warning. */
+    property bool owing: false
+
     /* The payment heroes. A plain alias rather than the default property: a
        default property alias swallows every unnamed child, and this file's own
        layout is one of them. Same reason FilterBar names its slots. */
@@ -117,6 +131,39 @@ Rectangle {
             font.pixelSize: Tokens.font.caption
             font.weight: Font.DemiBold
             color: Tokens.onChrome
+        }
+    }
+
+    /* A read-only money column: a quiet caption over a loud figure. Two Texts rather
+       than one interpolated string, for the reason MetaLine gives — and at body-large
+       rather than caption size, because these sit beside a 64px total and a 12px line
+       there reads as a footnote instead of a figure. */
+    component Figure: ColumnLayout {
+        id: money
+        property string caption: ""
+        property string value: ""
+        property color ink: Tokens.onChrome
+
+        visible: value !== ""
+        spacing: 0
+
+        Text {
+            text: money.caption
+            font.family: Tokens.font.family
+            font.pixelSize: Tokens.font.overline
+            font.weight: Font.DemiBold
+            font.capitalization: Font.AllUppercase
+            font.letterSpacing: 1.1
+            color: Tokens.onChromeMuted
+        }
+
+        Text {
+            text: "\u200e" + money.value
+            font.family: Tokens.font.family
+            font.pixelSize: Tokens.font.bodyLarge
+            font.features: Tokens.figures
+            font.weight: Font.DemiBold
+            color: money.ink
         }
     }
 
@@ -248,6 +295,52 @@ Rectangle {
                     font.weight: Font.DemiBold
                     color: Tokens.onChromeMuted
                 }
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // zone F — what has been settled, on a document that has been settled
+        // -----------------------------------------------------------------
+        /*
+         * Two read-only figures beside the total: what was paid and what is left.
+         *
+         * `pos`'s purchase footer draws the same three columns and hides the last two
+         * on a NEW document — there is nothing paid on an invoice that does not exist
+         * yet, and a "Paid 0.00" column on a blank form is a fake reading. So these
+         * appear only when the caller supplies them, and the caller supplies them only
+         * when it is editing.
+         *
+         * They were tried as caption lines in zone M and it was the wrong weight: an
+         * operator settling an invoice with a rep is reading "how much is left", and a
+         * 12px grey line under "1 lines" is not where anybody looks for that.
+         */
+        Rectangle {
+            Layout.fillHeight: true
+            Layout.topMargin: Tokens.spacing.xs
+            Layout.bottomMargin: Tokens.spacing.xs
+            visible: dock.paidText !== "" || dock.remainingText !== ""
+            implicitWidth: 1
+            color: Tokens.chromeBorder
+        }
+
+        ColumnLayout {
+            Layout.alignment: Qt.AlignVCenter
+            visible: dock.paidText !== "" || dock.remainingText !== ""
+            spacing: Tokens.spacing.xs
+
+            Figure {
+                caption: Strings.t("invoice.paid", "Paid")
+                value: dock.paidText
+                ink: Tokens.onChrome
+            }
+
+            Figure {
+                caption: Strings.t("invoice.fin.remaining", "Remaining")
+                value: dock.remainingText
+                /* Red only when something is actually owed: a settled invoice's zero is
+                   good news and colouring it as a warning would teach the operator to
+                   ignore the colour. */
+                ink: dock.owing ? Tokens.onChromeDanger : Tokens.onChromeSuccess
             }
         }
 

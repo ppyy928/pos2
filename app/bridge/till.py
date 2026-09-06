@@ -5,13 +5,16 @@ Implements the contract PosPage.qml's header states, over pos's data layer:
     read      busy, error, tiles, categories, lines,
               cartNumber, totalText, currencyText, itemsText, qtyText,
               discountText, customerName, customerPhone, hasCustomer,
-              remainingText, paidValid, allowPartial
+              remainingText, paidValid, allowPartial, imageCards, warnStock
     call      loadCategories(), loadTiles(tab, search), add(productId),
-              setQty(row, qty), remove(row), clear(), hold(), resolve(text),
+              addAnyway(productId), setQty(row, qty), setQtyAnyway(row, qty),
+              remove(row), clear(), hold(), resolve(text),
               scan(code), addFreeAmount(sign, amount), setCustomer(customerId),
-              setPaid(amount), payCash(), payPartial()
+              setPaid(amount), payCash(), payPartial(), reloadPreferences(),
+              setWarnStock(on)
     emits     invalidated(), lineTouched(row), resolved(text, added),
-              scanMissed(code, barcode), saleFinished(number), rejected(message)
+              scanMissed(code, barcode), saleFinished(number),
+              stockBlocked(info), stockWarning(rows), rejected(message)
 
 WHERE THE CART LIVES, AND WHY IT IS HERE
 
@@ -42,9 +45,36 @@ to forget one and leave a stale number on a dock that is 64px tall.
 
 WHAT IS NOT CARRIED OVER YET
 
-Receipt printing (pos auto-prints through `receipt_printing` after a sale) and
-the post-sale negative-stock warning. Both are real features with no surface on
-this screen yet, and inventing one here would be guessing.
+Receipt printing (pos auto-prints through `receipt_printing` after a sale).
+
+SELLING WHAT IS NOT ON THE SHELF
+
+pos never asks: it rings the sale and reports the negative stock afterwards, which
+is `stockWarning` here. That is the right shape for the case where the shelf count
+was wrong, and the wrong shape for the case that is far more common — a product at
+zero that the operator did not notice, on a screen where the figure is 13px in the
+corner of a tile. By then the sale is recorded, the stock is negative and correcting
+it is three screens away.
+
+So `_add` and `setQty` now ASK FIRST, through `stockBlocked`, and the line is not
+added until the answer comes back through `addAnyway` / `setQtyAnyway`. Three things
+this is careful about:
+
+  IT IS A QUESTION, NOT A REFUSAL. A shop sells goods that are physically present
+  and miscounted all the time. Blocking the sale would make the till wrong about
+  the real world; asking makes the operator right about it.
+
+  IT IS ABOUT THE LINE, NOT THE TAP. The figure compared against the shelf is what
+  the cart line would HOLD — so the fifth tap on a product with four in stock is
+  the one that asks, not the first.
+
+  A PRODUCT WITH NO SHELF NEVER ASKS. `track_stock` off means the quantity is not
+  a fact about anything (a service, a bag, anything weighed at the counter), which
+  is the same rule the tiles already draw with an infinity sign.
+
+`warnStock` is the shop's own switch, persisted as `pos.warn_stock`, so a shop that
+sells from a shelf it does not count can turn the whole thing off — from the dialog
+itself, which is where somebody who has just been asked twice is standing.
 """
 
 from __future__ import annotations
@@ -53,7 +83,8 @@ from typing import Any
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
-from . import fmt, legacy
+from .. import diagnostics
+from . import fmt, images, legacy
 
 #: Rows in the search dropdown under the till's search field.
 #:
@@ -78,6 +109,8 @@ class Till(QObject):
     categoriesChanged = Signal()
     busyChanged = Signal()
     errorChanged = Signal()
+    #: The till's own settings changed — today, whether cards carry a photo.
+    preferencesChanged = Signal()
 
     # -- events the page reacts to ---------------------------------------
     invalidated = Signal()
@@ -94,8 +127,19 @@ class Till(QObject):
     saleEditRequested = Signal("QVariant", int)
     #: Products whose stock went below zero on that sale.
     stockWarning = Signal("QVariantList")
+    #: An add or a quantity change that would sell more than the shelf holds,
+    #: asked rather than done: {product_id, name, stock, stock_text, wanted,
+    #: wanted_text, kind, row}. `kind` is "out" for a shelf at or below zero and
+    #: "short" for one that cannot cover the line; `row` is the cart row for a
+    #: quantity change and -1 for an add. Answered by addAnyway / setQtyAnyway.
+    stockBlocked = Signal("QVariant")
     held = Signal(str)
     rejected = Signal(str)
+
+    #: The setting behind `warnStock`. pos has never heard of it — it is this front
+    #: end's own, and `get_setting` falls back to the default passed here for any key
+    #: that has never been written.
+    WARN_STOCK_KEY = "pos.warn_stock"
 
     #: pos's own ceiling on a free amount.
     AMOUNT_MAX = 1e12
@@ -116,9 +160,21 @@ class Till(QObject):
         self._busy = False
         self._error = ""
         self._selling = False
+        #: True for exactly the length of one addAnyway / setQtyAnyway call: the
+        #: shelf question has been asked and answered, so the guard stands down for
+        #: that one call. Cleared in a `finally`, so a raise inside the add cannot
+        #: leave the till permanently unguarded.
+        self._forced = False
+        #: Do the tiles carry a photo? Both halves have to be true — the shop's
+        #: switch and at least one photo in the catalogue — so a shop that has
+        #: never added a picture keeps the compact cards it has always had.
+        self._image_cards = False
         #: The sale being rewritten, and its number for the chrome. 0 = a fresh cart.
         self._editing = 0
         self._editing_number = ""
+        #: What that sale had already been paid when it was loaded. The payment sheet
+        #: shows it and warns that a new figure replaces it.
+        self._editing_paid = 0.0
 
         # Every formatted string on this screen is built for one language, so a
         # language change has to rebuild all of them: the amounts carry a
@@ -140,6 +196,23 @@ class Till(QObject):
     @Property("QVariantList", notify=tilesChanged)
     def tiles(self) -> list:
         return self._tiles
+
+    @Property(bool, notify=preferencesChanged)
+    def imageCards(self) -> bool:
+        """Should the grid draw the photo card instead of the compact one?
+
+        One question with two halves, because either alone gives the wrong
+        answer. `ui.product_images` is the shop's decision, and a shop that
+        photographs nothing would still get tall cards with a placeholder in
+        every one of them; `any_product_image()` is the catalogue's state, and
+        acting on it alone would take the density away from a shop that added
+        one picture and then thought better of it.
+
+        Read per grid load rather than watched: it is two indexed reads next to
+        the query that builds the tiles, and it cannot then be stale against the
+        rows it describes.
+        """
+        return self._image_cards
 
     @Property("QVariantList", notify=resultsChanged)
     def results(self) -> list:
@@ -230,6 +303,18 @@ class Till(QObject):
     def remainingText(self) -> str:
         return self._money(max(0.0, self._total() - self._paid))
 
+    @Property(float, notify=changed)
+    def editingPaid(self) -> float:
+        """What the invoice being rewritten was already recorded as paid.
+
+        Kept apart from `_paid`, which the payment sheet overwrites as soon as the
+        operator types: this is the figure that was on the invoice when it was loaded,
+        and the sheet needs both to say "500 → 100" and to warn that the second number
+        replaces the first rather than adding to it — which is what `update_sale`
+        does (db.py:2706). Zero outside an edit, where there is nothing to replace.
+        """
+        return float(self._editing_paid)
+
     @Property(bool, notify=changed)
     def paidValid(self) -> bool:
         """pos's range: nothing paid (a full debt) up to the whole total. Above
@@ -245,7 +330,49 @@ class Till(QObject):
         try:
             return database.get_setting("sale.allow_partial", "1") == "1"
         except Exception:  # noqa: BLE001
+            diagnostics.log.debug("sale.allow_partial unreadable", exc_info=True)
             return False
+
+    @Property(bool, notify=preferencesChanged)
+    def warnStock(self) -> bool:
+        """Ask before selling past the shelf. On unless the shop turned it off.
+
+        Read from the database rather than cached, like `allowPartial` above: it is
+        one indexed read on a key that is asked about once per add, and a cache would
+        have to be invalidated by a Settings screen this object does not watch.
+        """
+        database = self._database(quiet=True)
+        if database is None:
+            # No shelf figures either, so there is nothing to warn about and a
+            # False here is the honest answer rather than a fallback.
+            return False
+        try:
+            return database.get_setting(self.WARN_STOCK_KEY, "1") == "1"
+        except Exception:  # noqa: BLE001
+            diagnostics.log.debug("pos.warn_stock unreadable", exc_info=True)
+            return False
+
+    @Slot(bool)
+    def setWarnStock(self, on: bool) -> None:
+        """The dialog's own "don't warn me again", and the Settings switch.
+
+        Written where the operator is standing when they decide, which is in front of
+        the question. It is a shop-wide setting and not a per-session mute on purpose:
+        somebody who has just been asked about the same untracked shelf three times is
+        answering for the shop, and a mute that forgets itself overnight would ask
+        them again tomorrow. The Settings screen carries the same switch, which is the
+        way back.
+        """
+        database = self._database()
+        if database is None:
+            return
+        try:
+            database.set_setting(self.WARN_STOCK_KEY, "1" if on else "0")
+        except Exception as exc:  # noqa: BLE001
+            self._set_error(str(exc))
+            return
+        diagnostics.business().info("stock warning %s", "on" if on else "off")
+        self.preferencesChanged.emit()
 
     # =====================================================================
     # LOADING
@@ -293,6 +420,8 @@ class Till(QObject):
                 rows = database.fetch_pos_products(self._category_id(tab), "")
             thresholds = self._thresholds(database)
             self._tiles = [self._tile(row, thresholds) for row in rows]
+            # Which card the grid draws, decided beside the rows it describes.
+            self._set_image_cards(self._wants_image_cards(database))
             self._set_error("")
         except Exception as exc:  # noqa: BLE001
             self._set_error(str(exc))
@@ -300,6 +429,21 @@ class Till(QObject):
         finally:
             self._set_busy(False)
         self.tilesChanged.emit()
+
+    @Slot()
+    def reloadPreferences(self) -> None:
+        """The shop changed a setting this screen renders.
+
+        Wired from the bridge root when Settings writes `ui.product_images`. The
+        grid is invalidated rather than repainted: the flag changes the shape of
+        every card in it, and a taller card holding a row that was measured for a
+        shorter one is exactly the sort of thing that looks like a bug.
+        """
+        database = self._database(quiet=True)
+        if database is None:
+            return
+        self._set_image_cards(self._wants_image_cards(database))
+        self.invalidated.emit()
 
     # =====================================================================
     # SEARCH
@@ -431,12 +575,41 @@ class Till(QObject):
         self._add(product["id"], product["name"],
                   float(product["sale_price"] or 0.0), 1.0)
 
+    @Slot(int)
+    def addAnyway(self, product_id: int) -> None:
+        """`add`, with the shelf question already answered.
+
+        A separate slot rather than a flag on `add`, so nothing can pass "skip the
+        check" by accident: every ordinary caller — a tile, the scanner, the picker —
+        gets the guarded path, and this one exists only to be called by the dialog
+        that asked.
+        """
+        self._forced = True
+        try:
+            self.add(product_id)
+        finally:
+            self._forced = False
+
     @Slot(int, float)
     def setQty(self, row: int, qty: float) -> None:
         if not self._valid(row) or qty <= 0:
             return
-        self._items[row]["qty"] = float(qty)
+        item = self._items[row]
+        blocked = self._shelf_block(item.get("product_id"), float(qty), row)
+        if blocked is not None:
+            self.stockBlocked.emit(blocked)
+            return
+        item["qty"] = float(qty)
         self.changed.emit()
+
+    @Slot(int, float)
+    def setQtyAnyway(self, row: int, qty: float) -> None:
+        """`setQty`, with the shelf question already answered."""
+        self._forced = True
+        try:
+            self.setQty(row, qty)
+        finally:
+            self._forced = False
 
     @Slot(int)
     def remove(self, row: int) -> None:
@@ -455,6 +628,7 @@ class Till(QObject):
         self._paid = 0.0
         self._editing = 0
         self._editing_number = ""
+        self._editing_paid = 0.0
         self._renumber()
         self.changed.emit()
 
@@ -528,6 +702,7 @@ class Till(QObject):
         self._customer = (database.fetch_customer(sale["customer_id"])
                           if sale.get("customer_id") else None)
         self._paid = float(sale.get("paid") or 0.0)
+        self._editing_paid = self._paid
         self._editing = int(sale_id)
         self._editing_number = str(sale.get("number") or "")
         self.changed.emit()
@@ -647,10 +822,15 @@ class Till(QObject):
                 continue
             try:
                 price = database.product_price(int(item["product_id"]), level)
-            except Exception:  # noqa: BLE001, S112 - a stale line, not a failure
+            except Exception:  # noqa: BLE001 - a stale line, not a failure
                 # A product deleted while its line sits in the cart: the line keeps
                 # the price it was added at, which is the honest answer and is what
                 # finalize_sale will refuse on if it matters.
+                diagnostics.log.debug(
+                    "reprice: stale cart line product_id=%s",
+                    item.get("product_id"),
+                    exc_info=True,
+                )
                 continue
             if price > 0:
                 item["price"] = price
@@ -864,8 +1044,8 @@ class Till(QObject):
             self._selling = False
 
         self._items = []
-
         self._customer = None
+
         self._paid = 0.0
         self._renumber(database)
 
@@ -899,8 +1079,24 @@ class Till(QObject):
         multi-unit. It is overridden by the customer's own counter for a plain
         product, and left exactly as passed for a multi-unit, whose price belongs
         to the pack rather than to the product.
+
+        The shelf is checked HERE rather than in `add`, because this is the one place
+        every route into the cart passes through — a tile, the scanner, the picker,
+        a product just created in the quick-add form — and a guard on one of the four
+        is a guard on none of them. It is also the only place that knows what the line
+        would come to, which is the figure the shelf has to cover.
         """
         unit = float(unit or 1.0)
+        existing = 0.0
+        for item in self._items:
+            if item["product_id"] == product_id:
+                existing = float(item["qty"])
+                break
+        blocked = self._shelf_block(product_id, existing + unit, -1)
+        if blocked is not None:
+            self.stockBlocked.emit(blocked)
+            return
+
         for row, item in enumerate(self._items):
             if item["product_id"] == product_id:
                 item["qty"] += unit
@@ -913,6 +1109,10 @@ class Till(QObject):
                     try:
                         tiered = database.product_price(int(product_id), level)
                     except Exception:  # noqa: BLE001
+                        diagnostics.log.debug(
+                            "tiered price unavailable: product_id=%s", product_id,
+                            exc_info=True,
+                        )
                         tiered = 0.0
                     if tiered > 0:
                         price = tiered
@@ -930,6 +1130,79 @@ class Till(QObject):
             row = len(self._items) - 1
         self.changed.emit()
         self.lineTouched.emit(row)
+
+    # =====================================================================
+    # THE SHELF
+    # =====================================================================
+    def _shelf_block(self, product_id: object, wanted: float,
+                     row: int) -> dict[str, Any] | None:
+        """The shelf's objection to holding `wanted` of `product_id`, or None.
+
+        None — the common answer — for all of: the guard standing down because the
+        question was already answered, the shop having switched the warning off, a
+        free-amount line with no product behind it, a product that does not count its
+        stock, and a shelf that covers the line.
+        """
+        if self._forced or product_id is None:
+            return None
+        if not self.warnStock:
+            return None
+        shelf = self._shelf(int(product_id))
+        if shelf is None:
+            return None
+        name, stock = shelf
+        if wanted <= stock:
+            return None
+        return {
+            "product_id": int(product_id),
+            "name": name,
+            "stock": stock,
+            "stock_text": self._qty(stock),
+            "wanted": float(wanted),
+            "wanted_text": self._qty(wanted),
+            # Two different sentences, and the dialog needs to know which: "there
+            # are none of these" and "there are three and the line wants five" are
+            # not the same news, and only the first one is a surprise.
+            "kind": "out" if stock <= 0 else "short",
+            # -1 for an add, so the answer knows whether to re-add a unit or to set
+            # a quantity — the two are not interchangeable on a line that already
+            # holds four.
+            "row": int(row),
+        }
+
+    def _shelf(self, product_id: int) -> tuple[str, float] | None:
+        """(name, stock) for a product that counts its stock, else None.
+
+        The wall is the first place asked and answers for nearly every tap: a tile
+        carries both figures and is reloaded after every sale, so the guard usually
+        costs no query at all. Anything not on the wall — a search hit, a scan, a
+        product created a second ago — is read once, which is the same read `add`
+        makes for it anyway.
+        """
+        for tile in self._tiles:
+            if tile["id"] == product_id:
+                # `tracked` and not `stock`: `_tile` reports an untracked product as
+                # 1.0 with an infinity sign, and comparing a second unit against that
+                # 1.0 would refuse to sell two of a service.
+                if not tile.get("tracked", True):
+                    return None
+                return (str(tile["name"]), float(tile["stock"]))
+
+        database = self._database(quiet=True)
+        if database is None:
+            return None
+        try:
+            product = database.fetch_product(int(product_id))
+        except Exception:  # noqa: BLE001
+            diagnostics.log.debug("shelf unreadable: product_id=%s", product_id,
+                                  exc_info=True)
+            return None
+        if product is None:
+            return None
+        if not bool(product.get("track_stock", 1)):
+            return None
+        return (str(product.get("name") or ""),
+                float(product.get("stock") or 0.0))
 
     def _try_code(self, text: str) -> bool:
         """Look `text` up as a barcode and add what it finds. True when it hit."""
@@ -959,23 +1232,36 @@ class Till(QObject):
         try:
             return legacy.scanner().normalize_digits(value)
         except Exception:  # noqa: BLE001
+            diagnostics.log.debug("scanner normalise unavailable", exc_info=True)
             return value
 
     def _tile(self, row: dict[str, Any], thresholds: dict[int, float]) -> dict[str, Any]:
         stock = float(row.get("stock") or 0.0)
         threshold = float(thresholds.get(row["id"], 0.0) or 0.0)
+        tracked = bool(row.get("track_stock", 1))
         return {
             "id": row["id"],
             "name": row["name"],
             "price_text": self._money(row["sale_price"]),
-            "stock": stock,
-            "stock_text": self._qty(stock),
+            # A product with no shelf reads as plentiful, so the tile never dims it and
+            # never warns about it. The figure is an infinity sign rather than a 0,
+            # because 0 on a till tile means "sold out" — the opposite of the truth.
+            "stock": stock if tracked else 1.0,
+            "stock_text": self._qty(stock) if tracked else "\u221e",
+            # Whether that figure means anything. Not read by QML — the tile draws
+            # the infinity sign above and needs nothing more — but `_shelf` cannot
+            # tell an untracked product from one with exactly one left without it,
+            # and the two answer the shelf question very differently.
+            "tracked": tracked,
             # Low is "still sellable but worth knowing": at or under the
             # product's own threshold and not yet zero, which the tile shows
-            # differently again.
-            "low_stock": 0.0 < stock <= threshold,
+            # differently again. Never true without a shelf.
+            "low_stock": tracked and 0.0 < stock <= threshold,
             "color": row.get("color") or "",
             "barcode": row.get("barcode") or "",
+            # The photo, as a URL, or "" for a product without one — which is the
+            # same thing to the card as a photo whose file has gone missing.
+            "image": images.url_for(row.get("image_path") or ""),
             # Not read by QML: what add() needs to build a cart line without
             # going back to the database.
             "price": float(row["sale_price"]),
@@ -1003,6 +1289,27 @@ class Till(QObject):
         except (TypeError, ValueError):
             return None
 
+    def _wants_image_cards(self, database) -> bool:
+        """The two halves of `imageCards`, read together.
+
+        Unreadable is False rather than an error: which card is drawn is not
+        worth taking a till screen down for, and the compact one is what the app
+        has always drawn.
+        """
+        try:
+            if database.get_setting("ui.product_images", "1") != "1":
+                return False
+            return bool(database.any_product_image())
+        except Exception:  # noqa: BLE001
+            diagnostics.log.debug("photo preference unreadable", exc_info=True)
+            return False
+
+    def _set_image_cards(self, value: bool) -> None:
+        if self._image_cards == value:
+            return
+        self._image_cards = value
+        self.preferencesChanged.emit()
+
     def _line_total(self, item: dict[str, Any]) -> float:
         return item["qty"] * item["price"] - item["discount"]
 
@@ -1015,18 +1322,21 @@ class Till(QObject):
         try:
             return legacy.formatters().fmt_money(value, currency=False)
         except Exception:  # noqa: BLE001
+            diagnostics.log.debug("money fallback for %r", value, exc_info=True)
             return "—"
 
     def _qty(self, value: object) -> str:
         try:
             return legacy.formatters().fmt_qty(value)
         except Exception:  # noqa: BLE001
+            diagnostics.log.debug("qty fallback for %r", value, exc_info=True)
             return ""
 
     def _when(self, value: object) -> str:
         try:
             return legacy.formatters().fmt_dt(value)
         except Exception:  # noqa: BLE001
+            diagnostics.log.debug("date fallback for %r", value, exc_info=True)
             return str(value or "")
 
     def _valid(self, row: int) -> bool:
@@ -1054,6 +1364,7 @@ class Till(QObject):
         try:
             self._number = database.next_cart_number()
         except Exception:  # noqa: BLE001
+            diagnostics.log.debug("cart number unavailable", exc_info=True)
             self._number = ""
 
     def _retranslate(self) -> None:
@@ -1068,8 +1379,15 @@ class Till(QObject):
             sign, number = free
             key = "pos.free_plus" if sign > 0 else "pos.free_minus"
             item["name"] = self._i18n.text(key, number=number)
-        self._tiles = [dict(tile, price_text=self._money(tile["price"]),
-                            stock_text=self._qty(tile["stock"]))
+        # `tracked` is honoured here as well as in `_tile`: reformatting from
+        # `tile["stock"]` alone turned an untracked product's infinity sign into the
+        # 1.0 that stands in for it, so switching language used to tell the operator
+        # a service had exactly one left.
+        self._tiles = [dict(tile,
+                            price_text=self._money(tile["price"]),
+                            stock_text=(self._qty(tile["stock"])
+                                        if tile.get("tracked", True)
+                                        else "\u221e"))
                        for tile in self._tiles]
         self.tilesChanged.emit()
         self.changed.emit()
@@ -1089,6 +1407,19 @@ class Till(QObject):
         self.busyChanged.emit()
 
     def _set_error(self, message: str) -> None:
+        # Logged before the dedup: the same sentence twice is two failures, and
+        # the traceback — still live inside the emitting except block — is what
+        # str(exc) threw away. Two severities, same test as the rejected tap:
+        # a live exception is an ERROR, a bare sentence ("Nothing to print.")
+        # is a refusal the operator can act on and stays DEBUG. An empty
+        # message clears the banner and is not a failure at all.
+        if message:
+            if diagnostics.active_exc():
+                diagnostics.log.error(
+                    "screen error: %s", message, exc_info=True
+                )
+            else:
+                diagnostics.log.debug("screen error: %s", message)
         if self._error == message:
             return
         self._error = message

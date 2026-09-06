@@ -7,19 +7,21 @@ import Mizan
 /*
  * A delivery: find the product, answer three figures, say what was paid.
  *
- *   ┌──────────────────────────────────────────────┬───────────────────────┐
- *   │ [ scan or search a product ......... ] [▤]   │ ┌─ SUPPLIER ────────┐ │
- *   │                                              │ │ Atlas Distribution│ │
- *   │ Product        Qty    Cost    Sells   Total  │ │ Karim · Blida     │ │
- *   │ Atlas Beans     12  250.00  320.00  3 000.00 │ └───────────────────┘ │
- *   │ Atlas Rice      20   80.00  110.00  1 600.00 │ ┌───────────────────┐ │
- *   │                                        ✎  ✕  │ │ 2 lines     TOTAL │ │
- *   │                                              │ │        4 600.00   │ │
- *   │                                              │ │ Paid [ 1000 ] All │ │
- *   │                                              │ │ Outstanding 3 600 │ │
- *   │                                              │ └───────────────────┘ │
- *   │                                              │ [ Save ] [  Cash  ]   │
- *   └──────────────────────────────────────────────┴───────────────────────┘
+ *   ┌────────────────────────────────────────────────────────────────────────┐
+ *   │ New delivery                                                          │
+ *   │ ┌─ SUPPLIER ─────────────┐  [ scan or search a product ....... ] [▤]  │
+ *   │ │ Atlas Distribution     │                                           │
+ *   │ │ Karim · Blida          │                                           │
+ *   │ └────────────────────────┘                                           │
+ *   │ Product              Qty      Cost     Sells        Total            │
+ *   │ Atlas Beans           12    250.00    320.00     3 000.00     ✎  ✕   │
+ *   │ Atlas Rice            20     80.00    110.00     1 600.00     ✎  ✕   │
+ *   │                                                                      │
+ *   │ ┌──────────────────────────────────────────────────────────────────┐  │
+ *   │ │ 2 lines   TOTAL 4 600.00   Paid [ 1000 ] All   Outstanding 3 600 │  │
+ *   │ │                                          [ Save ]  [  Cash  ]    │  │
+ *   │ └──────────────────────────────────────────────────────────────────┘  │
+ *   └────────────────────────────────────────────────────────────────────────┘
  *
  * WHY A TABLE AND NOT CART ROWS
  *
@@ -70,6 +72,16 @@ AppDialog {
     title: creating ? Strings.t("purchases.new", "New delivery")
                     : Strings.tf("purchases.edit_number", "Delivery {number}",
                                  { number: row.number !== undefined ? row.number : "" })
+
+    /*
+     * The header is the style's own Label again.
+     *
+     * The finder used to live up here, level with the document's name, to save the
+     * 60px a line of its own would cost. It has moved down to share the supplier's
+     * row instead — that row already ran half empty — so the saving stands and the
+     * two things a delivery opens with, who it came from and what was on it, now sit
+     * side by side where the eye finds them together.
+     */
 
     // =====================================================================
     // STATE
@@ -344,13 +356,60 @@ AppDialog {
         // -----------------------------------------------------------------
         // WHO IT IS FROM, AND WHAT GOES ON IT
         // -----------------------------------------------------------------
+        /* The till's customer control, holding a supplier: same card, same gesture —
+           tap to drop the list, type to narrow it, the ✕ to detach. It shares this
+           row with the finder: who the delivery came from and what is being put on
+           it are the two answers this screen opens with, and they belong on one
+           line, not stacked into two.
+
+           A delivery with no supplier is legitimate — a cash purchase from a market —
+           so the empty state is an invitation, not an error. */
         RowLayout {
             Layout.fillWidth: true
             spacing: Tokens.spacing.md
 
+            PartySelect {
+                Layout.fillWidth: true
+                Layout.maximumWidth: 480
+                glyph: "ic_fluent_vehicle_truck_profile_20_regular"
+                active: dialog.supplier !== null
+                title: dialog.supplier ? dialog.supplier.name
+                                       : Strings.t("purchases.no_supplier",
+                                                   "No supplier")
+                subtitle: dialog.supplier
+                          ? [dialog.supplier.contact, dialog.supplier.wilaya]
+                            .filter(function (p) { return p }).join("  ·  ")
+                          : Strings.t("purchases.supplier.hint",
+                                      "Tap to attach a supplier")
+                removeTip: Strings.t("purchases.supplier.remove", "Remove supplier")
+
+                /* Already in memory: the list is loaded with the dialog, so the
+                   dropdown filters it in QML and needs no round trip. Reloaded on
+                   each open anyway, because a supplier added from elsewhere while
+                   this dialog was up would otherwise be missing from it. */
+                rows: dialog.suppliers ? dialog.suppliers.rows : []
+                placeholder: Strings.t("suppliers.search.ph",
+                                       "Search name or phone")
+
+                onListRequested: {
+                    if (dialog.suppliers)
+                        dialog.suppliers.load("")
+                }
+                /* Attached by id, not by the row: the list carries a name, a phone
+                   and a debt, and the card shows a rep and a wilaya that only the
+                   full record has. */
+                onPicked: (party) => dialog.attach(party.id)
+                onRemoveRequested: dialog.supplier = null
+            }
+
+            /* Vertically centred against the card, which is the taller of the two:
+               a search field stretched to a card's height is a field that looks
+               broken. */
             ProductFinder {
                 id: finder
                 Layout.fillWidth: true
+                Layout.maximumWidth: 620
+                Layout.alignment: Qt.AlignVCenter
                 enabled: dialog.canManage
                 placeholder: Strings.t("purchases.finder.ph",
                                        "Scan or search a product to add it")
@@ -369,30 +428,9 @@ AppDialog {
                 onPicked: (product) => dialog.add(product)
             }
 
-            /* The till's customer card, holding a supplier: same widget, same gesture —
-               tap to attach, the x to detach. Above the note because that is where an
-               invoice names who it is from, and beside the finder because both are
-               things you set before the lines rather than after them.
-
-               A delivery with no supplier is legitimate — a cash purchase from a
-               market — so the empty state is an invitation, not an error. */
-            PartyCard {
-                Layout.preferredWidth: 360
-                Layout.minimumWidth: 280
-                glyph: "ic_fluent_vehicle_truck_profile_20_regular"
-                active: dialog.supplier !== null
-                title: dialog.supplier ? dialog.supplier.name
-                                       : Strings.t("purchases.no_supplier",
-                                                   "No supplier")
-                subtitle: dialog.supplier
-                          ? [dialog.supplier.contact, dialog.supplier.wilaya]
-                            .filter(function (p) { return p }).join("  ·  ")
-                          : Strings.t("purchases.supplier.hint",
-                                      "Tap to attach a supplier")
-                removeTip: Strings.t("purchases.supplier.remove", "Remove supplier")
-                onClicked: picker.open()
-                onRemoveRequested: dialog.supplier = null
-            }
+            /* The slack lands here, so neither the card nor the finder is stretched
+               across a wide dialog. */
+            Item { Layout.fillWidth: true }
         }
 
         // -----------------------------------------------------------------
@@ -441,13 +479,23 @@ AppDialog {
                         : (dialog.row.number !== undefined ? dialog.row.number : "")
             itemsText: Strings.tf("purchases.lines_n", "{count} lines",
                                   { count: dialog.lines.length })
-            /* Only once something has been paid: an unpaid delivery has nothing to
-               say here, and a "Paid now 0.00" line is noise. */
-            qtyText: dialog.paidValue > 0.005 ? dialog.money(dialog.paidValue) : ""
-            qtyCaption: Strings.t("purchases.paid", "Paid now")
-            discountText: dialog.due > 0.005 ? dialog.money(dialog.due) : ""
-            discountCaption: Strings.t("purchases.col.due", "Outstanding")
             totalText: dialog.money(dialog.total)
+
+            /*
+             * TOTAL / PAID / REMAINING, but only on a document that exists.
+             *
+             * `pos`'s purchase footer draws the same three columns and hides the last
+             * two while creating (purchase_form.py: `show_financial = self._invoice_id
+             * is not None`) — there is nothing paid on an invoice that has not been
+             * saved, and a "Paid 0.00" column on a blank form is a fake reading.
+             *
+             * They were caption lines in the metadata block before, which was the wrong
+             * weight: an operator settling up with a rep is reading "how much is left",
+             * and that is not something to put in 12px grey under "1 lines".
+             */
+            paidText: dialog.creating ? "" : dialog.money(dialog.paidValue)
+            remainingText: dialog.creating ? "" : dialog.money(dialog.due)
+            owing: dialog.due > 0.005
 
             actionItems: [
                 /* Two buttons and no field. A partial payment is a moment, not a
@@ -501,8 +549,8 @@ AppDialog {
     /*
      * Quantity, cost and selling price for one product, with a keypad typing straight
      * into whichever figure has focus. A popup inside this dialog rather than a
-     * workflow, for the usual reason: DialogHost shows one dialog at a time and a
-     * workflow would destroy the delivery being written.
+     * workflow: it is a field of this form, not a destination with a key and a
+     * permission, and it answers by handing a line back to the sheet.
      */
     LineEntry {
         id: entry
@@ -551,6 +599,14 @@ AppDialog {
         allowZero: true
         confirmText: Strings.t("purchases.save", "Save invoice")
 
+        /* Correcting a delivery that was already part-paid: `save_purchase_invoice`
+           reverses the old supplier debt and writes what arrives here as the invoice's
+           paid figure, so this amount replaces the stored one instead of adding to it.
+           `row` is the invoice as it was loaded and never re-read, which is exactly the
+           "before" figure the sheet needs. */
+        replaces: !dialog.creating
+        alreadyPaid: dialog.row.paid !== undefined ? dialog.row.paid : 0
+
         facts: {
             var out = []
             if (dialog.supplier && dialog.supplier.debt > 0)
@@ -571,159 +627,6 @@ AppDialog {
         onAccepted: (amount) => {
             dialog.paidText = String(amount)
             dialog.commit()
-        }
-    }
-
-    // =====================================================================
-    // THE SUPPLIER PICKER
-    // =====================================================================
-    /*
-     * An inline popup, not a workflow: DialogHost shows one dialog at a time, so a
-     * supplier picker opened as a workflow would destroy the delivery being written.
-     * Same reason ProductFinder owns its own browse list.
-     */
-    QC.Popup {
-        id: picker
-
-        parent: QC.Overlay.overlay
-        anchors.centerIn: QC.Overlay.overlay
-        /* Measured against the overlay it is parented to, not against `Window`: the
-           attached `Window` property only works on Items, and this dialog derives from
-           Popup — reading it warns and answers undefined. */
-        width: Math.min(620, (parent ? parent.width : 900) - 2 * Tokens.spacing.xxl)
-        height: Math.min(560, (parent ? parent.height : 700) - 2 * Tokens.spacing.xxl)
-        padding: Tokens.spacing.md
-        modal: true
-        focus: true
-
-        background: Rectangle {
-            color: Fluent.popupBackground
-            radius: Tokens.radius.lg
-            border.width: 1
-            border.color: Fluent.dividerBorder
-        }
-
-        onOpened: sieve.forceActiveFocus()
-
-        contentItem: ColumnLayout {
-            spacing: Tokens.spacing.sm
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Tokens.spacing.sm
-
-                Text {
-                    Layout.fillWidth: true
-                    text: Strings.t("suppliers.title", "Suppliers")
-                    font.family: Tokens.font.family
-                    font.pixelSize: Tokens.font.subtitle
-                    font.weight: Font.DemiBold
-                    color: Fluent.textPrimary
-                }
-
-                IconButton {
-                    glyph: "ic_fluent_dismiss_20_regular"
-                    glyphSize: Tokens.icon.sm
-                    onClicked: picker.close()
-                }
-            }
-
-            QC.TextField {
-                id: sieve
-                Layout.fillWidth: true
-                Layout.preferredHeight: Tokens.size.control
-                placeholderText: Strings.t("suppliers.search.ph",
-                                           "Search name or phone")
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-            }
-
-            ListView {
-                id: shelf
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                clip: true
-                QC.ScrollBar.vertical: FluentScrollBar { }
-
-                /* Filtered here: the suppliers list arrived whole with the screen, so
-                   narrowing it is instant and needs no round trip. */
-                model: {
-                    var needle = sieve.text.trim().toLowerCase()
-                    var source = dialog.suppliers ? dialog.suppliers.rows : []
-                    if (needle === "")
-                        return source
-                    var out = []
-                    for (var i = 0; i < source.length; i++) {
-                        var s = source[i]
-                        if (String(s.name).toLowerCase().indexOf(needle) >= 0
-                                || String(s.phone || "").indexOf(needle) >= 0
-                                || String(s.contact || "").toLowerCase()
-                                   .indexOf(needle) >= 0)
-                            out.push(s)
-                    }
-                    return out
-                }
-
-                delegate: Rectangle {
-                    id: hit
-                    required property var modelData
-
-                    width: shelf.width
-                    height: Tokens.size.tableRow
-                    radius: Tokens.radius.sm
-                    color: hover.hovered ? Fluent.subtleSecondary : "transparent"
-
-                    HoverHandler { id: hover }
-                    TapHandler {
-                        onTapped: {
-                            dialog.attach(hit.modelData.id)
-                            picker.close()
-                        }
-                    }
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: Tokens.spacing.sm
-                        anchors.rightMargin: Tokens.spacing.sm
-                        spacing: Tokens.spacing.sm
-
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 0
-
-                            Text {
-                                Layout.fillWidth: true
-                                text: hit.modelData.name
-                                elide: Text.ElideRight
-                                font.family: Tokens.font.family
-                                font.pixelSize: Tokens.font.body
-                                color: Fluent.textPrimary
-                            }
-
-                            Text {
-                                visible: text !== ""
-                                text: [hit.modelData.contact, hit.modelData.wilaya,
-                                       hit.modelData.phone]
-                                      .filter(function (p) { return p }).join("  ·  ")
-                                font.family: Tokens.font.family
-                                font.pixelSize: Tokens.font.overline
-                                color: Fluent.textTertiary
-                            }
-                        }
-
-                        /* What is already owed. The one figure that changes which
-                           supplier a shopkeeper buys from next. */
-                        Text {
-                            visible: hit.modelData.debt > 0
-                            text: "\u200e" + dialog.money(hit.modelData.debt)
-                            font.family: Tokens.font.family
-                            font.pixelSize: Tokens.font.body
-                            font.weight: Font.DemiBold
-                            color: Tokens.danger
-                        }
-                    }
-                }
-            }
         }
     }
 }

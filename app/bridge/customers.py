@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
+from .. import diagnostics
 from . import fmt, interop, legacy
 
 
@@ -275,6 +276,35 @@ class Customers(QObject):
         self.paid.emit(payload)
         self.invalidated.emit()
 
+    @Slot(int)
+    def remove(self, customer_id: int) -> None:
+        """Delete a customer that has no history at all.
+
+        The rule is the database's (`delete_customer` refuses anything with a sale, a
+        payment or a debt); what belongs here is the sentence. It raises a stable
+        English sentinel rather than a translated string, so the operator's own
+        language is chosen at this seam instead of inside the data layer.
+        """
+        database = self._database()
+        if database is None:
+            return
+        try:
+            database.delete_customer(int(customer_id))
+        except ValueError as exc:
+            if "has history" in str(exc):
+                self.rejected.emit(self._i18n.text(
+                    "customers.delete.refused",
+                    "This customer has sales, payments or a debt — the record stays "
+                    "so those documents keep the name on them."))
+            else:
+                self.rejected.emit(str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001
+            self.rejected.emit(str(exc))
+            return
+        self.invalidated.emit()
+        self.reload()
+
     @Slot(float, result=str)
     def moneyText(self, value: float) -> str:
         return fmt.money(value)
@@ -284,6 +314,8 @@ class Customers(QObject):
     # =====================================================================
     def _row(self, row: dict) -> dict:
         debt = float(row.get("debt") or 0.0)
+        sales = int(row.get("sale_count") or 0)
+        payments = int(row.get("payment_count") or 0)
         return {
             "id": row["id"],
             "name": row["name"],
@@ -291,6 +323,10 @@ class Customers(QObject):
             "debt": debt,
             "debt_text": fmt.money(debt),
             "owes": debt > 0,
+            # What the bin on this row is allowed to do. Counted by the query, not
+            # asked per row, and sent to the table so a customer with history shows a
+            # dimmed icon instead of a refusal the operator has to press to discover.
+            "deletable": sales == 0 and payments == 0 and round(debt, 2) == 0.0,
         }
 
     def _stat_block(self, rows: list) -> dict:
@@ -322,6 +358,19 @@ class Customers(QObject):
         self.busyChanged.emit()
 
     def _set_error(self, message: str) -> None:
+        # Logged before the dedup: the same sentence twice is two failures, and
+        # the traceback — still live inside the emitting except block — is what
+        # str(exc) threw away. Two severities, same test as the rejected tap:
+        # a live exception is an ERROR, a bare sentence ("Nothing to print.")
+        # is a refusal the operator can act on and stays DEBUG. An empty
+        # message clears the banner and is not a failure at all.
+        if message:
+            if diagnostics.active_exc():
+                diagnostics.log.error(
+                    "screen error: %s", message, exc_info=True
+                )
+            else:
+                diagnostics.log.debug("screen error: %s", message)
         if self._error == message:
             return
         self._error = message

@@ -12,7 +12,7 @@ import Mizan
  *   │ Return items — TRX-0174                                  │
  *   │ Coca-Cola 1.5L    sold 2   [ − 1 + ]  of 2               │
  *   │ Pain complet    sold 1,5   [ − 0 + ]  of 1,5 (0,5 back)  │
- *   │ Reason [ Damaged packaging                            ]  │
+ *   │ Reason [                                             ▾]  │
  *   │ Refund (estimate)                          120,00        │
  *   │                              [Cancel] [Confirm return]   │
  *   └──────────────────────────────────────────────────────────┘
@@ -22,6 +22,16 @@ import Mizan
  * A line can only give back what is left of it: sold minus already returned. The
  * steppers stop there, and `create_return` applies the same rule again when it
  * writes — the screen is the convenience, the database is the guarantee.
+ *
+ * THE REASON IS CHOSEN, NOT TYPED
+ *
+ * `app.sales.returnReasons` is a fixed list — the shop's twelve reasons, in the
+ * operator's language — and its first entry is empty, which is what the dialog
+ * opens on. Typing it was the earlier version and it produced five spellings of
+ * "damaged" across three languages, which made the reason column on the returns
+ * page and in the returns report worth nothing. Empty stays available and stays
+ * first: a return with no stated reason is a normal return, and a required reason
+ * only teaches the operator to pick whichever sentence is at the top.
  *
  * THE REFUND IS AN ESTIMATE ON THIS SIDE
  *
@@ -95,7 +105,7 @@ AppDialog {
         for (var i = 0; i < items.length && i < picked.length; i++)
             if (picked[i] > 0)
                 lines.push({ product_id: items[i].product_id, qty: picked[i] })
-        ctrl.createReturn(saleId, lines, reason.text)
+        ctrl.createReturn(saleId, lines, reason.currentText)
     }
 
     Connections {
@@ -236,13 +246,18 @@ AppDialog {
                 color: Fluent.textSecondary
             }
 
-            QC.TextField {
+            /* The fixed list, empty entry first. `currentIndex` is left at 0 and
+               never assigned from a binding: a ComboBox writes its own index the
+               moment it is used, which would destroy one — the trap SettingsPage
+               and PaginationBar both document. There is nothing to restore here
+               anyway, since a new return starts with no reason. */
+            QC.ComboBox {
                 id: reason
                 Layout.fillWidth: true
                 Layout.preferredHeight: Tokens.size.control
+                model: dialog.ctrl ? dialog.ctrl.returnReasons : [""]
                 font.family: Tokens.font.family
                 font.pixelSize: Tokens.font.body
-                onAccepted: dialog.confirm()
             }
         }
 

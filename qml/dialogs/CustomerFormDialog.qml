@@ -5,11 +5,10 @@ import FluentControls
 import Mizan
 
 /*
- * One customer: who they are, what they owe, what they bought, what they paid —
- * and the two fields that can be changed, in the same screen.
+ * One customer: who they are, what they owe, what they bought, what they paid.
  *
  *   ┌────────────────────────────────────────────────────────────────┐
- *   │ Ahmed Belkacem                              [ Edit info ]      │
+ *   │ Ahmed Belkacem                              [ Edit details ]   │
  *   │ 0661 20 41 88                                                  │
  *   │ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐                    │
  *   │ │ DEBT   │ │ PAID   │ │ SALES  │ │ BOUGHT │                    │
@@ -21,32 +20,32 @@ import Mizan
  *   │ ...                                                            │
  *   └────────────────────────────────────────────────────────────────┘
  *
- * WHY THERE IS NO SEPARATE DETAILS SCREEN ANY MORE
+ * A RECORD, NOT A FORM
  *
- * There used to be two: a read-only `customer_details` behind an eye icon, and a
- * two-field `customer_form` behind a pencil. Every visit to the first one that
- * found something wrong ended in the second, and the first could not show the name
- * being corrected. They were one screen split by an implementation detail — the
- * editor was small — so this is that screen: the record is what you look at, and
- * the two editable facts about it are edited in place.
+ * The details used to be editable in place here: the same fields, shown or hidden by
+ * a flag, with a Save in the footer that meant nothing the rest of the time. Two
+ * things were wrong with it. The figures an operator opened the record to read
+ * vanished the moment they pressed Edit — and they pressed Edit *because* of those
+ * figures. And "new customer" was this same 1240px screen with the history, the
+ * cards and the sections all switched off, which is not a form, it is a record with
+ * the record missing.
  *
- * That also removes the eye column from the customers table, which is what the
- * table wanted: three icons on a row where two of them opened the same record.
+ * So the details live in `CustomerEditDialog`, which opens over this one when
+ * something needs correcting and on its own from the customers page when there is
+ * nothing to correct yet.
+ *
+ * WHY THE EDITOR IS DECLARED HERE AND NOT ROUTED
+ *
+ * DialogHost shows one dialog at a time, so opening the editor through `workflows`
+ * would close this record and leave the operator nowhere to come back to. It is a
+ * child of this dialog instead, which is what the delete confirmations on the pages
+ * already do.
  *
  * WHY THE PAYMENT IS TAKEN HERE AND NOT IN A DIALOG OF ITS OWN
  *
- * DialogHost shows one dialog at a time, so a payment dialog opened from here
- * would replace this one — the operator loses the balance they were reading in
- * order to act on it, and gets a screen that has to repeat it. The payment panel
- * below is the same three fields inside the section that already lists them, which
- * is what the supplier screen has always done.
- *
- * CREATING
- *
- * A new customer has no debt, no history and nothing to select between, so none of
- * that is drawn: the dialog is the two fields and Save. Same file, because "new
- * customer" and "this customer" differ by what the record contains, not by which
- * widgets exist.
+ * Same reason, one step further: a payment is taken *against* a balance that is on
+ * this screen. The panel below is three fields inside the section that already lists
+ * what they produce, and it keeps the balance in view while the money is counted.
  */
 AppDialog {
     id: dialog
@@ -59,28 +58,40 @@ AppDialog {
     readonly property var ctrl: (typeof app !== "undefined" && app) ? app.customers : null
     readonly property var session: (typeof app !== "undefined" && app) ? app.session : null
     readonly property var till: (typeof app !== "undefined" && app) ? app.pos : null
+    /* The two lists on this record are documents belonging to other screens: a sale
+       is opened by the sales workflow and printed by the printer, and a payment is
+       deleted by the payments register. This record asks them; it owns neither. */
+    readonly property var workflows: (typeof app !== "undefined" && app)
+                                     ? app.workflows : null
+    readonly property var printer: (typeof app !== "undefined" && app)
+                                   ? app.printing : null
+    readonly property var paymentsCtrl: (typeof app !== "undefined" && app)
+                                        ? app.payments : null
+    /* Sales are written elsewhere — the till, and the ticket this record opens over
+       itself. Either changes the history listed here and the four figures above it. */
+    readonly property var salesCtrl: (typeof app !== "undefined" && app)
+                                     ? app.sales : null
 
     readonly property int customerId: context && context.customer_id
                                       ? context.customer_id : 0
-    readonly property bool creating: customerId === 0
 
     /* Reading a customer needs `customers.view`, which is what opened this. Writing
-       needs the manage right, and that is gated per control rather than by refusing
-       to open: an operator who may look at an account should see it, not a refusal
-       where the record was. */
+       needs the manage right, and that is gated on the button that opens the editor
+       rather than by refusing to open the record: an operator who may look at an
+       account should see it, not a refusal where the record was. */
     readonly property bool canManage: session ? session.can("customers.manage") : true
     readonly property bool canSell: session ? session.can("pos.sell") : true
 
-    /* Wide when there is history to show, narrow when there are two fields. */
-    preferredWidth: creating ? 700 : 1240
-    preferredHeight: creating ? 0 : 900
+    preferredWidth: 1240
+    preferredHeight: 900
 
-    /* The record's own name is the title once there is one: a dialog headed "Edit
-       customer" makes the operator look down to find out which. */
-    title: creating ? Strings.t("customers.add", "New customer")
-                    : (row.name !== undefined && row.name
-                       ? row.name
-                       : Strings.t("customers.edit_title", "Edit customer"))
+    /* The generic word, not the name.
+     *
+     * The name is the first line of the record itself, at title size, with the phone
+     * and the chips attached to it — so putting it here as well printed it twice,
+     * forty pixels apart, in two different sizes. The dialog's own title says which
+     * KIND of thing is open; the record says which one. */
+    title: Strings.t("customers.record_title", "Customer")
 
     // =====================================================================
     // STATE
@@ -93,11 +104,6 @@ AppDialog {
 
     readonly property real debt: row.debt !== undefined ? row.debt : 0
     readonly property bool owes: debt > 0
-
-    /* The identity fields are read-only until asked for. A screen whose name is
-       already in an editable box invites a stray keystroke into the ledger, and it
-       reads as a form rather than as a record. */
-    property bool editingInfo: creating
 
     /* The payment panel, folded away until there is a payment to take. Opened by
        its own button, and opened for the operator when the row action that brought
@@ -113,15 +119,28 @@ AppDialog {
 
     readonly property int measure: 560
 
+    /*
+     * Whether this record can be deleted at all.
+     *
+     * The same three conditions `delete_customer` enforces — no sale, no payment, no
+     * debt — read off the payload that is already on screen rather than asked for
+     * again. A bin that is dark until the account is empty is the rule stated in
+     * advance; a bin that always looks pressable and answers with a refusal is the
+     * rule stated too late.
+     */
+    readonly property bool deletable: {
+        var sales = row.sales !== undefined ? row.sales : []
+        var payments = row.payments !== undefined ? row.payments : []
+        return customerId > 0 && sales.length === 0 && payments.length === 0
+               && !(row.debt > 0.005)
+    }
+
     // =====================================================================
     // DATA
     // =====================================================================
     Component.onCompleted: {
         reload()
-        fill()
-        if (creating) {
-            name.forceActiveFocus()
-        } else if (context && context.section) {
+        if (context && context.section) {
             sectionBar.select(context.section)
             if (context.section === "payments" && canManage && owes)
                 openPayment()
@@ -133,28 +152,10 @@ AppDialog {
             row = ctrl.customer(customerId) || ({})
     }
 
-    /* The record into the fields. Called on open and on cancel, so "cancel" means
-       "put it back" rather than "leave whatever I typed lying there". */
-    function fill() {
-        name.text = row.name !== undefined ? row.name : ""
-        phone.text = row.phone !== undefined ? row.phone : ""
-        address.text = row.address !== undefined ? row.address : ""
-        wilaya.text = row.wilaya !== undefined ? row.wilaya : ""
-        email.text = row.email !== undefined ? row.email : ""
-        taxId.text = row.tax_id !== undefined ? row.tax_id : ""
-        tradeId.text = row.trade_id !== undefined ? row.trade_id : ""
-        /* 0 is "no ceiling", and an empty box says that better than a 0 the
-           operator has to know to read as unlimited. */
-        limit.text = row.credit_limit ? String(row.credit_limit) : ""
-        levelKey = row.price_level !== undefined && row.price_level
-                   ? row.price_level : "retail"
-        error.text = ""
-    }
-
-    /* Which of the three counters this customer buys over. Held here rather than
-       read off the combo, because the combo is rebuilt when the language changes
-       and its index would not survive that. */
-    property string levelKey: "retail"
+    /* Which of the three counters this customer buys over — read off the record,
+       for the chip beside the name. Changing it is the editor's business. */
+    readonly property string levelKey: row.price_level !== undefined && row.price_level
+                                       ? row.price_level : "retail"
 
     readonly property var levels: [
         { key: "retail", label: Strings.t("price.retail", "Retail") },
@@ -169,28 +170,62 @@ AppDialog {
         return 0
     }
 
-    function saveInfo() {
-        error.text = ""
-        if (ctrl)
-            ctrl.save(name.text, phone.text, customerId, {
-                address: address.text,
-                wilaya: wilaya.text,
-                email: email.text,
-                tax_id: taxId.text,
-                trade_id: tradeId.text,
-                price_level: dialog.levelKey,
-                credit_limit: limit.text
-            })
-    }
-
-    function cancelInfo() {
-        fill()
-        editingInfo = false
-    }
-
     function openPayment() {
         paying = true
         amount.forceActiveFocus()
+    }
+
+    // -- the two lists' row actions ---------------------------------------
+    /*
+     * A row here is a document, and each of these hands it to whoever owns it.
+     *
+     * They are wired to say something when they cannot act, rather than nothing: an
+     * icon that answers a press with silence is indistinguishable from a broken one,
+     * and that is exactly how the pen on the sales page came to be reported as dead.
+     */
+    function saleAt(row) {
+        return (row >= 0 && row < salesRows.length) ? salesRows[row] : null
+    }
+
+    function paymentAt(row) {
+        return (row >= 0 && row < paymentRows.length) ? paymentRows[row] : null
+    }
+
+    function openSale(row) {
+        var sale = saleAt(row)
+        if (!sale)
+            return
+        if (!workflows || !workflows.open) {
+            error.text = Strings.t("workflow.not_ready",
+                                   "That screen is not part of this build yet.")
+            return
+        }
+        workflows.open("sale_transaction", { sale_id: sale.id })
+    }
+
+    function printSale(row) {
+        var sale = saleAt(row)
+        if (!sale)
+            return
+        if (!printer) {
+            error.text = Strings.t("workflow.not_ready",
+                                   "That screen is not part of this build yet.")
+            return
+        }
+        /* Returns immediately: a thermal printer can be missing or out of paper, and
+           the answer arrives on the printer's own signals. */
+        printer.printSale(sale.id)
+        notice = Strings.t("sales.printed", "Sent to the printer")
+    }
+
+    function askDeletePayment(row) {
+        var payment = paymentAt(row)
+        if (!payment || !canManage)
+            return
+        confirmDeletePayment.paymentId = payment.id
+        confirmDeletePayment.amount = payment.amount_text
+        confirmDeletePayment.when = payment.when
+        confirmDeletePayment.open()
     }
 
     // -- money ------------------------------------------------------------
@@ -317,6 +352,16 @@ AppDialog {
             width: 190,
             ltr: true,
             tone: function (r) { return r.owes ? "danger" : "" }
+        },
+        /* A row on this list is a ticket: look at it, or hand the customer a copy of
+           it. Both were already reachable from the sales page and were the two things
+           an operator asked this record for and could not do without leaving it. */
+        {
+            key: "actions",
+            actions: [
+                { id: "view" },
+                { id: "print" }
+            ]
         }
     ]
 
@@ -334,6 +379,14 @@ AppDialog {
             width: 260,
             ltr: true,
             tone: "success"
+        },
+        /* No pen: a payment is not edited, because a corrected receipt is a different
+           receipt. It is deleted — which puts the debt back — and taken again. */
+        {
+            key: "actions",
+            actions: [
+                { id: "delete", enabled: dialog.canManage }
+            ]
         }
     ]
 
@@ -344,18 +397,11 @@ AppDialog {
         target: dialog.ctrl
         ignoreUnknownSignals: true
 
-        /* Saved while creating means the record now exists and there is nothing
-           more to do here. Saved while editing means the two fields landed: stay
-           open on the record, because the operator came to look at it. */
+        /* The editor closes itself on a save; this is the record catching up with
+           what it just wrote. */
         function onSaved(customer) {
-            if (dialog.creating) {
-                dialog.close()
-                return
-            }
-            dialog.editingInfo = false
             dialog.notice = Strings.t("customers.info_saved", "Details saved.")
             dialog.reload()
-            dialog.fill()
         }
 
         function onPaid(result) {
@@ -376,6 +422,29 @@ AppDialog {
 
         /* Another screen moved this account — a sale on the till, a payment on the
            payments page. The figures here are the reason the dialog is open. */
+        function onInvalidated() {
+            dialog.reload()
+        }
+    }
+
+    /* The payments register refuses out loud, on whichever screen asked it to: this
+       record can now delete a payment, so it has to be able to hear "no". */
+    Connections {
+        target: dialog.paymentsCtrl
+        ignoreUnknownSignals: true
+
+        function onRejected(message) {
+            error.text = message
+        }
+    }
+
+    /* A ticket opened from the list above stays open OVER this record, and a return
+       taken on it changes what this history says. Catch up rather than show what was
+       true when the record opened. */
+    Connections {
+        target: dialog.salesCtrl
+        ignoreUnknownSignals: true
+
         function onInvalidated() {
             dialog.reload()
         }
@@ -419,10 +488,9 @@ AppDialog {
                 Layout.fillWidth: true
                 spacing: Tokens.spacing.xs
 
-                // -- read state
+                // -- who they are, as the record has it
                 Text {
                     Layout.fillWidth: true
-                    visible: !dialog.editingInfo
                     text: dialog.row.name !== undefined && dialog.row.name
                           ? dialog.row.name : "—"
                     wrapMode: Text.WordWrap
@@ -433,7 +501,7 @@ AppDialog {
                 }
 
                     Text {
-                        visible: !dialog.editingInfo && text !== ""
+                        visible: text !== ""
                         text: dialog.row.phone !== undefined && dialog.row.phone
                               ? "\u200e" + dialog.row.phone : ""
                         font.family: Tokens.font.family
@@ -442,7 +510,7 @@ AppDialog {
                     }
 
                     /*
-                     * The rest of the record, read-only, on one line.
+                     * The rest of the record on one line.
                      *
                      * Wilaya, price level and credit ceiling — the three that change
                      * what happens at the till, so they belong beside the name rather
@@ -452,7 +520,6 @@ AppDialog {
                      */
                     RowLayout {
                         Layout.fillWidth: true
-                        visible: !dialog.editingInfo
                         spacing: Tokens.spacing.md
 
                         Text {
@@ -494,203 +561,59 @@ AppDialog {
                     }
 
 
-                // -- edit state
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: dialog.editingInfo
-                        spacing: Tokens.spacing.md
-
-                        Field {
-                            label: Strings.t("qcustomer.name", "Customer name")
-                            required: true
-
-                            QC.TextField {
-                                id: name
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: Tokens.size.control
-                                enabled: dialog.canManage
-                                font.family: Tokens.font.family
-                                font.pixelSize: Tokens.font.bodyLarge
-                                onAccepted: dialog.saveInfo()
-                            }
-                        }
-
-                        Field {
-                            Layout.maximumWidth: 300
-                            label: Strings.t("qcustomer.phone", "Phone")
-
-                            QC.TextField {
-                                id: phone
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: Tokens.size.control
-                                enabled: dialog.canManage
-                                inputMethodHints: Qt.ImhDialableCharactersOnly
-                                font.family: Tokens.font.family
-                                font.pixelSize: Tokens.font.body
-                                /* A phone number reads left to right in every
-                                   language. */
-                                horizontalAlignment: TextInput.AlignLeft
-                                onAccepted: dialog.saveInfo()
-                            }
-                        }
-                    }
-
-                    /*
-                     * Where they are, and how they buy.
-                     *
-                     * A small shop delivers, so the address is not optional in
-                     * practice; the wilaya is how an Algerian address is filed. The
-                     * price level and the ceiling are on this row because they are
-                     * the two fields that change what the till does — everything
-                     * else here is only ever read off a printed invoice.
-                     */
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: dialog.editingInfo
-                        spacing: Tokens.spacing.md
-
-                        Field {
-                            label: Strings.t("party.address", "Address")
-
-                            QC.TextField {
-                                id: address
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: Tokens.size.control
-                                enabled: dialog.canManage
-                                font.family: Tokens.font.family
-                                font.pixelSize: Tokens.font.body
-                            }
-                        }
-
-                        Field {
-                            Layout.maximumWidth: 220
-                            label: Strings.t("party.wilaya", "Wilaya")
-
-                            QC.TextField {
-                                id: wilaya
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: Tokens.size.control
-                                enabled: dialog.canManage
-                                font.family: Tokens.font.family
-                                font.pixelSize: Tokens.font.body
-                            }
-                        }
-
-                        Field {
-                            Layout.maximumWidth: 240
-                            label: Strings.t("customer.price_level", "Price level")
-
-                            QC.ComboBox {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: Tokens.size.control
-                                enabled: dialog.canManage
-                                textRole: "label"
-                                model: dialog.levels
-                                currentIndex: dialog.levelIndex(dialog.levelKey)
-                                font.family: Tokens.font.family
-                                font.pixelSize: Tokens.font.body
-                                onActivated: (index) => {
-                                    dialog.levelKey = dialog.levels[index].key
-                                }
-                            }
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: dialog.editingInfo
-                        spacing: Tokens.spacing.md
-
-                        Field {
-                            Layout.maximumWidth: 280
-                            label: Strings.t("party.email", "Email")
-
-                            QC.TextField {
-                                id: email
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: Tokens.size.control
-                                enabled: dialog.canManage
-                                inputMethodHints: Qt.ImhEmailCharactersOnly
-                                horizontalAlignment: TextInput.AlignLeft
-                                font.family: Tokens.font.family
-                                font.pixelSize: Tokens.font.body
-                            }
-                        }
-
-                        Field {
-                            Layout.maximumWidth: 200
-                            label: Strings.t("party.tax_id", "NIF")
-
-                            QC.TextField {
-                                id: taxId
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: Tokens.size.control
-                                enabled: dialog.canManage
-                                horizontalAlignment: TextInput.AlignLeft
-                                font.family: Tokens.font.family
-                                font.pixelSize: Tokens.font.body
-                            }
-                        }
-
-                        Field {
-                            Layout.maximumWidth: 200
-                            label: Strings.t("party.trade_id", "RC")
-
-                            QC.TextField {
-                                id: tradeId
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: Tokens.size.control
-                                enabled: dialog.canManage
-                                horizontalAlignment: TextInput.AlignLeft
-                                font.family: Tokens.font.family
-                                font.pixelSize: Tokens.font.body
-                            }
-                        }
-
-                        Field {
-                            Layout.maximumWidth: 200
-                            label: Strings.t("customer.credit_limit", "Credit limit")
-
-                            QC.TextField {
-                                id: limit
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: Tokens.size.control
-                                enabled: dialog.canManage
-                                placeholderText: Strings.t("customer.limit.none",
-                                                           "no ceiling")
-                                inputMethodHints: Qt.ImhFormattedNumbersOnly
-                                font.family: Tokens.font.family
-                                font.pixelSize: Tokens.font.body
-                            }
-                        }
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        visible: dialog.editingInfo
-                        text: Strings.t("customer.credit_limit.hint",
-                                        "0 means no ceiling. Above it, a sale on account is refused.")
-                        wrapMode: Text.WordWrap
-                        font.family: Tokens.font.family
-                        font.pixelSize: Tokens.font.caption
-                        color: Fluent.textTertiary
-                    }
-
             }
 
-            /* One button, and only while there is a record to edit. The Save that
-               ends the edit is in the footer with every other commit on this
-               dialog, so there is one place to look for it. */
-            GlyphButton {
+            /*
+             * What can be done to the record itself, beside the record.
+             *
+             * The two sections below own the errands — start a sale, take a payment,
+             * open an invoice — because each of those acts on a row in the list under
+             * it. These two act on the customer, so they belong to the header: the
+             * details are corrected in a form over this dialog, and the record itself
+             * can go when there is nothing recorded against it.
+             *
+             * Both gated on the manage right: an operator who may read an account can
+             * open it and cannot change it.
+             */
+            ColumnLayout {
                 Layout.alignment: Qt.AlignBottom
-                visible: !dialog.creating && !dialog.editingInfo
-                glyph: "ic_fluent_edit_20_regular"
-                text: Strings.t("action.edit_info", "Edit info")
-                enabled: dialog.canManage
-                onClicked: {
-                    dialog.editingInfo = true
-                    dialog.notice = ""
-                    name.forceActiveFocus()
+                spacing: Tokens.spacing.xs
+
+                GlyphButton {
+                    Layout.fillWidth: true
+                    glyph: "ic_fluent_edit_20_regular"
+                    text: Strings.t("action.edit_details", "Edit details")
+                    enabled: dialog.canManage
+                    onClicked: {
+                        dialog.notice = ""
+                        editor.edit(dialog.row)
+                    }
+                }
+
+                /*
+                 * Deleting is offered, and refused, on the spot.
+                 *
+                 * `delete_customer` allows it only for a record with no sale, no payment
+                 * and no debt — a duplicate or a typo. Those three facts are already on
+                 * this screen, so the button knows the answer before it is pressed and
+                 * says it in the tooltip rather than letting the operator press a bin
+                 * and read a refusal. Nothing is ever detached: a sale that lost its
+                 * customer is a debt nobody owes.
+                 */
+                GlyphButton {
+                    Layout.fillWidth: true
+                    glyph: "ic_fluent_delete_20_regular"
+                    text: Strings.t("action.delete", "Delete")
+                    enabled: dialog.canManage && dialog.deletable
+                    icon.color: enabled ? Tokens.danger : Fluent.textDisabled
+                    tooltip: dialog.deletable
+                             ? ""
+                             : Strings.t("customers.delete.refused",
+                                         "This customer has sales, payments or a debt — the record stays so those documents keep the name on them.")
+                    onClicked: {
+                        dialog.notice = ""
+                        confirmDelete.open()
+                    }
                 }
             }
         }
@@ -704,7 +627,6 @@ AppDialog {
            row of labels. */
         CardRow {
             Layout.fillWidth: true
-            visible: !dialog.creating
             minCardWidth: 230
 
             KpiCard {
@@ -761,7 +683,6 @@ AppDialog {
         SectionBar {
             id: sectionBar
             Layout.fillWidth: true
-            visible: !dialog.creating
 
             sections: [
                 {
@@ -789,7 +710,6 @@ AppDialog {
         StackLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: !dialog.creating
             currentIndex: sectionBar.currentIndex
 
             // -- sales ----------------------------------------------------
@@ -837,6 +757,15 @@ AppDialog {
                                ? Strings.t("state.no_results.title", "No matches")
                                : Strings.t("customer.no_sales",
                                            "This customer has not bought anything yet.")
+                    /* Double-click opens the ticket, the same gesture every other
+                       table in this app answers to. */
+                    onRowActivated: (row) => dialog.openSale(row)
+                    onActionTriggered: (row, action) => {
+                        if (action === "view")
+                            dialog.openSale(row)
+                        else if (action === "print")
+                            dialog.printSale(row)
+                    }
                 }
             }
 
@@ -899,13 +828,10 @@ AppDialog {
                                 Layout.fillWidth: true
                                 spacing: Tokens.spacing.xs
 
-                                QC.TextField {
+                                NumberField {
                                     id: amount
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: Tokens.size.control
-                                    inputMethodHints: Qt.ImhFormattedNumbersOnly
-                                    font.family: Tokens.font.family
-                                    font.pixelSize: Tokens.font.bodyLarge
                                     onAccepted: dialog.pay()
                                 }
 
@@ -979,6 +905,10 @@ AppDialog {
                                ? Strings.t("state.no_results.title", "No matches")
                                : Strings.t("customer.no_payments",
                                            "Nothing has been paid against this account.")
+                    onActionTriggered: (row, action) => {
+                        if (action === "delete")
+                            dialog.askDeletePayment(row)
+                    }
                 }
             }
         }
@@ -1013,31 +943,110 @@ AppDialog {
 
             Item { Layout.fillWidth: true }
 
-            /* One button, three meanings, in the order they are reached: abandon a
-               new record, put an edit back, or leave. Naming them apart matters —
-               "Cancel" on a record nobody edited would suggest something is being
-               undone. */
             GlyphButton {
                 glyph: "ic_fluent_dismiss_20_regular"
                 outlined: true
-                text: dialog.editingInfo ? Strings.t("action.cancel", "Cancel")
-                                         : Strings.t("action.close", "Close")
-                onClicked: {
-                    if (dialog.creating || !dialog.editingInfo)
-                        dialog.close()
-                    else
-                        dialog.cancelInfo()
-                }
+                text: Strings.t("action.close", "Close")
+                onClicked: dialog.close()
+            }
+        }
+    }
+
+    // =====================================================================
+    // THE DETAILS, IN A FORM OF THEIR OWN
+    // =====================================================================
+    CustomerEditDialog {
+        id: editor
+
+        /* The record catches up through the controller's `saved` signal, which this
+           dialog is already listening to — so there is nothing to do here but keep
+           the last refusal from lingering over a successful save. */
+        onCommitted: error.text = ""
+    }
+
+    /* Deleting a payment is not a tidy-up: the debt it settled comes back. So the
+       confirmation names the amount and the date, which is what the operator needs to
+       be sure it is the right row — the same sentence the payments register uses,
+       because it is the same act on the same record. */
+    FluentDialog {
+        id: confirmDeletePayment
+
+        property int paymentId: -1
+        property string amount: ""
+        property string when: ""
+        readonly property int measure: 460
+
+        modal: true
+        title: Strings.t("payments.delete.title", "Delete this payment?")
+        standardButtons: QC.Dialog.Yes | QC.Dialog.No
+
+        onAccepted: {
+            if (!dialog.paymentsCtrl) {
+                error.text = Strings.t("workflow.not_ready",
+                                       "That screen is not part of this build yet.")
+                return
+            }
+            /* `kind` tells the register which table the id belongs to; the customer
+               and supplier payment tables number themselves independently. */
+            dialog.paymentsCtrl.remove(confirmDeletePayment.paymentId, "customer")
+            dialog.reload()
+        }
+
+        contentItem: Column {
+            spacing: Tokens.spacing.sm
+
+            Text {
+                width: confirmDeletePayment.measure
+                text: Strings.t("payments.delete.body",
+                                "The amount is added back to the debt it settled.")
+                wrapMode: Text.WordWrap
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.body
+                color: Fluent.textPrimary
             }
 
-            GlyphButton {
-                visible: dialog.editingInfo
-                glyph: "ic_fluent_save_20_regular"
-                text: Strings.t("action.save", "Save")
-                highlighted: true
-                enabled: dialog.canManage && name.text.trim() !== ""
-                onClicked: dialog.saveInfo()
+            Text {
+                width: confirmDeletePayment.measure
+                text: confirmDeletePayment.when + "  ·  \u200e" + confirmDeletePayment.amount
+                wrapMode: Text.WordWrap
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.body
+                font.weight: Font.DemiBold
+                color: Fluent.textPrimary
             }
+        }
+    }
+
+    /* Deleting the record itself. Only reachable while `deletable` — so the dialog
+       states what goes rather than arguing about whether it may. */
+    ConfirmDialog {
+        id: confirmDelete
+
+        title: Strings.t("customers.delete.title", "Delete this customer?")
+        body: Strings.t("customers.delete.body",
+                        "Nothing is recorded against this account, so nothing is lost with it.")
+
+        facts: [
+            {
+                label: Strings.t("qcustomer.name", "Customer name"),
+                value: dialog.row.name !== undefined ? dialog.row.name : "",
+                tone: ""
+            },
+            {
+                label: Strings.t("qcustomer.phone", "Phone"),
+                value: dialog.row.phone !== undefined ? dialog.row.phone : "",
+                tone: ""
+            }
+        ]
+
+        confirmText: Strings.t("customers.delete.action", "Delete the customer")
+
+        onConfirmed: {
+            if (dialog.ctrl)
+                dialog.ctrl.remove(dialog.customerId)
+            /* The list behind reloads on `invalidated`; this record is about a row
+               that no longer exists, so it goes too. */
+            dialog.close()
         }
     }
 }

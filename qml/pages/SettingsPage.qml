@@ -183,6 +183,58 @@ Item {
                     }
                 }
 
+                /* Diagnostics. Not a setting — it is how the person who has the
+                   problem hands over the evidence. Every action this app takes is
+                   already in these files (app/instrument.py); without a button,
+                   collecting them means reading a path down a phone line. */
+                Rectangle {
+                    Layout.fillWidth: true
+                    visible: Diag.logDir !== ""
+                    color: Fluent.cardBackground
+                    radius: Tokens.radius.lg
+                    border.width: 1
+                    border.color: Fluent.dividerBorder
+                    implicitHeight: logs.implicitHeight + 2 * Tokens.size.cardPadding
+
+                    ColumnLayout {
+                        id: logs
+                        anchors.fill: parent
+                        anchors.margins: Tokens.size.cardPadding
+                        spacing: Tokens.spacing.md
+
+                        Text {
+                            text: Strings.t("settings.logs", "Diagnostics")
+                            font.family: Tokens.font.family
+                            font.pixelSize: Tokens.font.subtitle
+                            font.weight: Font.DemiBold
+                            color: Fluent.textPrimary
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: Tokens.spacing.md
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: Diag.logDir
+                                font.family: "Consolas"
+                                font.pixelSize: Tokens.font.caption
+                                color: Fluent.textSecondary
+                                elide: Text.ElideMiddle
+                            }
+
+                            GlyphButton {
+                                glyph: "ic_fluent_folder_open_20_regular"
+                                text: Strings.t("settings.logs.open", "Open log folder")
+                                onClicked: {
+                                    Diag.action("SettingsPage", "open log folder")
+                                    Diag.openLogFolder()
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Item { Layout.fillWidth: true; implicitHeight: Tokens.spacing.lg }
             }
         }

@@ -45,9 +45,22 @@ AppDialog {
     property var row: ({})
     readonly property var text_: row.text !== undefined ? row.text : ({})
 
-    Component.onCompleted: {
+    function reload() {
         if (ctrl && saleId)
             row = ctrl.sale(saleId) || ({})
+    }
+
+    Component.onCompleted: reload()
+
+    /* A return recorded in the dialog ABOVE this one changes what this ticket says:
+       the per-line returned figures, and what is still returnable. This record stays
+       open under it (see the return button below), so it has to catch up rather than
+       sit there showing what was true a moment ago. */
+    Connections {
+        target: dialog.ctrl
+        ignoreUnknownSignals: true
+        function onReturned(result) { dialog.reload() }
+        function onInvalidated() { dialog.reload() }
     }
 
     readonly property string tone: {
@@ -357,10 +370,14 @@ AppDialog {
                 highlighted: true
                 enabled: dialog.canReturn
                 onClicked: {
+                    /* The return sheet opens OVER this ticket and this ticket stays:
+                       an operator returning two lines out of nine is reading the
+                       document while they do it, and closing it took the reference
+                       away. The Connections above refresh the figures when the
+                       return lands. */
                     if (dialog.workflows)
                         dialog.workflows.open("return_create",
                                               { sale_id: dialog.saleId })
-                    dialog.close()
                 }
             }
         }

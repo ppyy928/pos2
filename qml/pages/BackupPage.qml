@@ -179,24 +179,29 @@ Item {
         contentItem: Column {
             spacing: Tokens.spacing.sm
 
+            /* Two sentences, and the catalogue's own names the file — read through `t`
+               it showed a literal "{name}", so this is `tf`. The consequence stays a
+               second line of its own: it is the part nobody can undo. */
             Text {
                 width: confirmRestore.measure
-                text: Strings.t("backup.restore.body",
-                                "Everything recorded since this backup was taken is lost: sales, payments, stock and settings are replaced by the copy.")
+                text: Strings.tf("backup.restore.body",
+                                 "Restore \u201c{name}\u201d? The current database will be REPLACED. This cannot be undone.",
+                                 { name: confirmRestore.name })
                 wrapMode: Text.WordWrap
                 font.family: Tokens.font.family
                 font.pixelSize: Tokens.font.body
+                font.weight: Font.DemiBold
                 color: Fluent.textPrimary
             }
 
             Text {
                 width: confirmRestore.measure
-                text: "\u200e" + confirmRestore.name
-                wrapMode: Text.WrapAnywhere
+                text: Strings.t("backup.restore.loss",
+                                "Everything recorded since this backup was taken is lost: sales, payments, stock and settings are replaced by the copy.")
+                wrapMode: Text.WordWrap
                 font.family: Tokens.font.family
                 font.pixelSize: Tokens.font.body
-                font.weight: Font.DemiBold
-                color: Tokens.danger
+                color: Fluent.textPrimary
             }
         }
     }

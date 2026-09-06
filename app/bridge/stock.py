@@ -1,7 +1,7 @@
 """app.stock — the ledger, the stocktake and the expiry register.
 
     app.stock   movements, movementsTotal, load(productId, kind, page)
-                sheet, hasSheet, openCount(categoryId, reason),
+                sheet, hasSheet, ensureSheet(), addLine/addByCode/removeLine,
                 setCounted(productId, counted), postCount(), cancelCount()
                 batches(productId), saveBatch(...), deleteBatch(id),
                 writeOff(batchId, reason)
@@ -32,6 +32,7 @@ from typing import Any
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
+from .. import diagnostics
 from . import fmt, interop, legacy
 
 #: What a movement row's `kind` is rendered as. The keys are the ledger's own, so a
@@ -41,6 +42,7 @@ _KIND_KEYS = {
     "initial": "stock.kind.initial",
     "sale": "stock.kind.sale",
     "sale_edit": "stock.kind.sale_edit",
+    "sale_delete": "stock.kind.sale_delete",
     "return": "stock.kind.return",
     "purchase": "stock.kind.purchase",
     "purchase_delete": "stock.kind.purchase_delete",
@@ -56,6 +58,7 @@ _KIND_TONES = {
     "initial": "info",
     "sale": "",
     "sale_edit": "info",
+    "sale_delete": "warning",
     "return": "success",
     "purchase": "success",
     "purchase_delete": "warning",
@@ -161,6 +164,9 @@ class Stock(QObject):
                 sheet = database.fetch_stock_count(int(ref_id))
                 return str(sheet.get("number") or "") if sheet else ""
         except Exception:  # noqa: BLE001
+            diagnostics.log.debug(
+                "ledger reference unreadable: %s#%s", table, ref_id, exc_info=True
+            )
             return ""
         return ""
 
@@ -230,22 +236,6 @@ class Stock(QObject):
             return False
         self.loadSheet()
         return bool(self._sheet.get("id"))
-
-    @Slot()
-    @Slot(int)
-    @Slot(int, str)
-    def openCount(self, category_id: int = 0, reason: str = "") -> None:
-        """Start a sheet explicitly. `ensureSheet` is what the screen uses; this
-        stays for a caller that wants a scope and a reason recorded up front."""
-        database = self._database()
-        if database is None:
-            return
-        try:
-            database.open_stock_count(int(category_id) or None, str(reason or ""))
-        except Exception as exc:  # noqa: BLE001
-            self.rejected.emit(str(exc))
-            return
-        self.loadSheet()
 
     @Slot(int)
     @Slot(int, "QVariant")

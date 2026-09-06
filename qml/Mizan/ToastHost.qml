@@ -43,6 +43,13 @@ Item {
         if (message === undefined || message === "")
             return
 
+        /* Every toast is recorded, whatever it says. This is the single most
+           useful line in a support log: it is what the operator actually read,
+           in the operator's own language, at the moment they read it — which is
+           the sentence a bug report is written from. Severity travels with it so
+           a refusal ("the cart is empty") is not filed as a failure. */
+        Diag.action("ToastHost", "toast " + _severityName(severity), message)
+
         if (current)
             current.close()          // fades, then destroys itself
 
@@ -50,8 +57,10 @@ Item {
             message: message,
             severity: severity === undefined ? Severity.info : severity
         })
-        if (!toast)
+        if (!toast) {
+            Diag.fail("ToastHost", "could not build a toast for: " + message)
             return
+        }
 
         /* Bindings rather than values, so the pill stays centred and clear of
            the bottom edge when the window is resized under it. */
@@ -62,5 +71,16 @@ Item {
 
         current = toast
         toast.show()
+    }
+
+    /* Severity is an enum, and an enum in a log line is a number nobody can
+       read six months later. */
+    function _severityName(severity) {
+        switch (severity) {
+        case Severity.success: return "success"
+        case Severity.caution: return "caution"
+        case Severity.error:   return "error"
+        default:               return "info"
+        }
     }
 }

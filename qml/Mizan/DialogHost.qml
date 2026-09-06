@@ -4,13 +4,33 @@ import FluentControls
 import Mizan
 
 /*
- * The window's dialogs. One host, one dialog at a time, keyed by workflow.
+ * The window's dialogs, keyed by workflow — and stacked, not swapped.
  *
  *     DialogHost { id: dialogs }
  *     Connections {
  *         target: app.workflows
  *         function onRequested(key, context) { dialogs.show(key, context) }
  *     }
+ *
+ * WHY A STACK
+ *
+ * This used to close the open dialog before building the next one, on the theory
+ * that one dialog at a time is simpler. It is not what the screens do. A customer's
+ * record lists their sales and opens one; a supplier's record opens a delivery; the
+ * product form opens a stock adjustment. Every one of those is "look at this thing
+ * from inside that thing", and closing the opener meant the record an operator was
+ * reading vanished under them — and in the product form's case took unsaved edits
+ * with it. There was nowhere to come back to.
+ *
+ * So `show` pushes and a close pops. A Popup opened later is placed later in the
+ * window's overlay, so it draws over the one beneath it and dims it with its own
+ * modal scrim; Escape reaches the topmost popup only. Nothing about the layering
+ * needed building — only this file needed to stop destroying the layer below.
+ *
+ * A dialog that genuinely REPLACES its opener still can: it closes itself after
+ * routing, which is what UnknownBarcodeDialog does when the operator chooses to add
+ * the product instead ("that question is answered, this one is not a layer to come
+ * back to").
  *
  * WHY THE MAP LIVES HERE AND THE PERMISSION DOES NOT
  *
@@ -56,12 +76,16 @@ Item {
         "sale_transaction": "../dialogs/SaleDetailsDialog.qml",
         "return_create": "../dialogs/ReturnDialog.qml",
         "return_details": "../dialogs/ReturnDetailsDialog.qml",
-        /* One record screen per party, doing what a `*_details` panel and a form
-           used to do between them — see workflows.py for why the split went. */
+        /* One record screen per party, with the details it holds edited in a form of
+           their own — which the record opens as a child. The `*_edit` keys are how a
+           page reaches that form when there is no record yet. */
         "customer_form": "../dialogs/CustomerFormDialog.qml",
+        "customer_edit": "../dialogs/CustomerEditDialog.qml",
         "supplier_form": "../dialogs/SupplierFormDialog.qml",
+        "supplier_edit": "../dialogs/SupplierEditDialog.qml",
         "cash_entry": "../dialogs/CashEntryDialog.qml",
         "employee_form": "../dialogs/EmployeeFormDialog.qml",
+        "taxes": "../dialogs/TaxesDialog.qml",
         "purchase_form": "../dialogs/PurchaseFormDialog.qml",
         "categories": "../dialogs/CategoriesDialog.qml",
         "units": "../dialogs/UnitsDialog.qml",
@@ -69,50 +93,97 @@ Item {
         "products_arrange": "../dialogs/ArrangeDialog.qml",
         "barcode_labels": "../dialogs/BarcodeLabelsDialog.qml",
         "products_export": "../dialogs/ExportDialog.qml",
-        "products_import": "../dialogs/ImportDialog.qml"
+        "products_import": "../dialogs/ImportDialog.qml",
+        "products_incomplete": "../dialogs/IncompleteProductsDialog.qml"
     })
 
-    property var current: null
+    /* Open dialogs, oldest first. A page reads `current` for the top one; nothing
+       reads the rest, but the depth is what tells this file when to stop. */
+    property var stack: []
+
+    readonly property var current: stack.length > 0 ? stack[stack.length - 1] : null
+
+    /* A dialog that opens a dialog that opens the first one is a cycle, and a cycle
+       here fills the overlay with modal layers nobody can dismiss. Four is one more
+       than anything this app legitimately nests (record → form → confirmation), so
+       the fifth is a defect and says so instead of piling up. */
+    readonly property int maxDepth: 4
 
     function show(key, context) {
         var file = files[key]
         if (file === undefined) {
+            Diag.warn("DialogHost", "no file for workflow key " + key)
             host.unavailable(key)
             return
         }
 
-        close()
+        if (stack.length >= maxDepth) {
+            Diag.fail("DialogHost",
+                      key + ": refused at depth " + stack.length
+                      + " — a dialog chain this deep is a cycle")
+            host.failed(key, "dialog stack too deep")
+            return
+        }
+
+        Diag.action("DialogHost", "open " + key, context)
 
         var component = Qt.createComponent(Qt.resolvedUrl(file))
         if (component.status === Component.Error) {
+            /* A defect rather than a refusal: the file is named in the map above,
+               so it exists and does not compile. errors.log is where that
+               belongs, with the reason QML gave. */
+            Diag.fail("DialogHost", key + ": " + component.errorString())
             host.failed(key, component.errorString())
             return
         }
 
         var dialog = component.createObject(host, { context: context || ({}) })
         if (dialog === null) {
+            Diag.fail("DialogHost", key + ": " + component.errorString())
             host.failed(key, component.errorString())
             return
         }
 
-        /* Closed for any reason — a button, Escape, the operator finishing —
-           takes the object with it. Deferred, because destroying an object while
-           it is emitting the signal that brought us here is how a crash starts. */
+        /* Closed for any reason — a button, Escape, the operator finishing — takes
+           the object with it and leaves the layer beneath it open. Deferred, because
+           destroying an object while it is emitting the signal that brought us here
+           is how a crash starts. */
         dialog.closed.connect(function () {
+            Diag.action("DialogHost", "closed " + key)
+            host.forget(dialog)
             Qt.callLater(function () {
                 if (dialog !== null)
                     dialog.destroy()
             })
         })
 
-        current = dialog
+        var next = stack.slice()
+        next.push(dialog)
+        stack = next
         dialog.open()
     }
 
+    /* Drop one dialog from the stack, wherever it is: they usually close top-down,
+       but a dialog closed by its own logic while another sits over it must not leave
+       a hole that `current` then points at. */
+    function forget(dialog) {
+        var next = []
+        for (var i = 0; i < stack.length; i++)
+            if (stack[i] !== dialog)
+                next.push(stack[i])
+        stack = next
+    }
+
+    /* Close the topmost. Each close pops itself through the handler above, so
+       closing repeatedly walks the stack down. */
     function close() {
-        if (current) {
+        if (current)
             current.close()
-            current = null
-        }
+    }
+
+    function closeAll() {
+        var open_ = stack.slice()
+        for (var i = open_.length - 1; i >= 0; i--)
+            open_[i].close()
     }
 }

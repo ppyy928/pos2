@@ -168,13 +168,10 @@ AppDialog {
                 color: Fluent.textSecondary
             }
 
-            QC.TextField {
+            NumberField {
                 id: amount
                 Layout.fillWidth: true
                 Layout.preferredHeight: Tokens.size.control
-                inputMethodHints: Qt.ImhFormattedNumbersOnly
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.bodyLarge
                 onAccepted: dialog.confirm()
             }
         }

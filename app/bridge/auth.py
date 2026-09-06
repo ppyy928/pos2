@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Property, QObject, QRunnable, QThreadPool, Signal, Slot
 
+from .. import diagnostics
 from . import legacy
 
 
@@ -48,7 +49,7 @@ class Session(QObject):
         except ImportError as exc:
             # No pos/ means no authentication at all, so refusing every
             # permission is the accurate answer rather than a defensive one.
-            print(f"bridge: no session layer ({exc})")
+            diagnostics.log.warning("no session layer (%s)", exc)
             self._store = None
 
     # -- what QML reads ---------------------------------------------------
@@ -179,7 +180,11 @@ class _LoginTask(QRunnable):
         except Exception as exc:  # noqa: BLE001
             # Anything from a missing file to a locked database. It has to reach
             # the operator: a silent exception on a pool thread would leave the
-            # login screen spinning forever.
+            # login screen spinning forever. The traceback belongs in errors.log
+            # — the username, never the password, travels with it.
+            diagnostics.log.exception(
+                "login attempt failed on the pool: user=%r", self._username
+            )
             self._auth._finished.emit(None, str(exc))
             return
         self._auth._finished.emit(user, "")
