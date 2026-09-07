@@ -5,7 +5,8 @@ Implements the contract PosPage.qml's header states, over pos's data layer:
     read      busy, error, tiles, categories, lines,
               cartNumber, totalText, currencyText, itemsText, qtyText,
               discountText, customerName, customerPhone, hasCustomer,
-              remainingText, paidValid, allowPartial, imageCards, warnStock
+              remainingText, paid, paidText, paidValid, allowPartial,
+              imageCards, warnStock
     call      loadCategories(), loadTiles(tab, search), add(productId),
               addAnyway(productId), setQty(row, qty), setQtyAnyway(row, qty),
               remove(row), clear(), hold(), resolve(text),
@@ -304,6 +305,30 @@ class Till(QObject):
         return self._money(max(0.0, self._total() - self._paid))
 
     @Property(float, notify=changed)
+    def paid(self) -> float:
+        """What has been taken against this cart, raw.
+
+        `remainingText` is the figure the dock draws; this is the number a page
+        needs to decide whether anything is still owed — the dock's `owing` is
+        the caller's call, because "0.00" is good news rather than a warning. It
+        is the LIVE draft: zero on a new sale until a partial payment is typed,
+        and the invoice's recorded figure while one is being rewritten — the
+        payment sheet replaces it, never adds to it.
+        """
+        return float(self._paid)
+
+    @Property(str, notify=changed)
+    def paidText(self) -> str:
+        """The same figure formatted, for the dock's settled column.
+
+        Always formats: whether it is shown is a rule about documents, not about
+        numbers, and it belongs to the page — an invoice being rewritten shows
+        its settled figures, a new sale has none, and a guest invoice cannot owe
+        anything so its "paid" is only ever the total said twice.
+        """
+        return self._money(self._paid)
+
+    @Property(float, notify=changed)
     def editingPaid(self) -> float:
         """What the invoice being rewritten was already recorded as paid.
 
@@ -331,6 +356,27 @@ class Till(QObject):
             return database.get_setting("sale.allow_partial", "1") == "1"
         except Exception:  # noqa: BLE001
             diagnostics.log.debug("sale.allow_partial unreadable", exc_info=True)
+            return False
+
+    @Property(bool, notify=changed)
+    def allowDebt(self) -> bool:
+        """Whether money may be left owing: `sale.allow_debt`.
+
+        The switch was in Settings and enforced by nothing — here or in pos,
+        which never reads it either. Now it owns the whole underpayment family,
+        because they are all the same act: a full debt sale (nothing paid), a
+        partial (some left over) — both leave a balance on an account, and a
+        shop that switched accounts off meant both. Read live, like
+        `allowPartial` above: the Settings screen that writes it does not tell
+        this controller it did.
+        """
+        database = self._database(quiet=True)
+        if database is None:
+            return False
+        try:
+            return database.get_setting("sale.allow_debt", "1") == "1"
+        except Exception:  # noqa: BLE001
+            diagnostics.log.debug("sale.allow_debt unreadable", exc_info=True)
             return False
 
     @Property(bool, notify=preferencesChanged)
@@ -531,6 +577,10 @@ class Till(QObject):
             # True for a product the tile wall never shows. Worth saying here,
             # because this is the one place in the app that finds those on purpose.
             "hidden": not bool(row.get("show_on_pos", True)),
+            # False when the quantity is not a fact about anything — a service, a
+            # bag, anything weighed at the counter. The picker draws no "out of
+            # stock" for those and the till does not ask about their shelf.
+            "track_stock": bool(row.get("track_stock", True)),
         }
 
     # =====================================================================
@@ -859,6 +909,12 @@ class Till(QObject):
         total = self._total()
         paid = self._paid
         if not 0.0 <= paid <= total:
+            return
+        if paid < total and not self.allowDebt and not self._editing:
+            self.rejected.emit(self._i18n.text(
+                "pay.debt_off",
+                "Sales on account are switched off in Settings.",
+            ))
             return
         if paid < total and self._customer is None:
             self.rejected.emit(self._i18n.text("pay.need_customer"))

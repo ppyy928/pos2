@@ -35,6 +35,11 @@ from PySide6.QtCore import Property, QObject, Signal, Slot
 from .. import diagnostics
 from . import fmt, interop, legacy
 
+# The fuse on `catalogue()` below. Borrowed from Till rather than re-declared:
+# it is one rule about one catalogue, and two copies of it would be two numbers
+# to keep equal.
+from .till import CATALOGUE_MAX
+
 #: What a movement row's `kind` is rendered as. The keys are the ledger's own, so a
 #: kind added in the data layer shows up here as its raw name rather than blank —
 #: visible, and obviously unfinished, which is the failure mode to prefer.
@@ -342,6 +347,46 @@ class Stock(QObject):
                 # changed is fewer keystrokes than one they must type every time.
                 "cost": float(row.get("purchase_price") or 0.0),
                 "price": float(row.get("sale_price") or 0.0),
+            })
+        return out
+
+    @Slot(result="QVariantList")
+    def catalogue(self) -> list:
+        """Every product, in one call, for a picker that is not the till's.
+
+        Same row shape and same fuse as `Till.catalogue()`, because the pickers
+        that sit over a delivery, a stocktake and a movement ledger draw the same
+        surface as the till's own: one table, headed, filtered in QML as the
+        operator types. `find()` stays for the dropdown under a search field,
+        where a dozen rows is the right answer — this is the "what was that
+        thing called" list, and a ceiling on it is the row the operator wanted
+        made invisible.
+        """
+        database = self._database()
+        if database is None:
+            return []
+        try:
+            page = database.fetch_products("", 1, CATALOGUE_MAX, None)
+        except Exception as exc:  # noqa: BLE001
+            self.rejected.emit(str(exc))
+            return []
+        out = []
+        for row in page.get("rows") or []:
+            unit = row.get("unit") or ""
+            out.append({
+                "id": row["id"],
+                "name": row.get("name") or "",
+                "barcode": row.get("barcode") or "",
+                "category": row.get("category") or "",
+                "stock": float(row.get("stock") or 0.0),
+                "stock_text": f"{fmt.qty(row.get('stock'))} {unit}".strip(),
+                "price_text": fmt.money(row.get("sale_price")),
+                # Both marked in the picker's status column: a hidden product is
+                # still sellable and still deliverable, so it is listed and said.
+                "hidden": not bool(row.get("show_on_pos", True)),
+                # False for a service or anything weighed at the counter: no
+                # shelf, so never "out of stock".
+                "track_stock": bool(row.get("track_stock", True)),
             })
         return out
 

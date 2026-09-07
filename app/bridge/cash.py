@@ -5,7 +5,8 @@ what is in the drawer right now, and every payment that has been recorded agains
 a debt.
 
     app.cash        session, movements, open(), close(), add(kind, amount, reason)
-    app.payments    load(kind, search, page, pageSize), rows, stats
+    app.payments    load(kind, search, page, pageSize), rows, stats,
+                    remove(id, kind), update(id, kind, amount)
 
 A CASH SESSION IS A SHIFT, NOT A SETTING
 ----------------------------------------
@@ -281,6 +282,11 @@ class Payments(QObject):
 
     invalidated = Signal()
     rejected = Signal(str)
+    #: A payment's amount was corrected. Carries the payload the data layer
+    #: returned — the row's id, the party's id and the debt after the move —
+    #: with `kind` and the formatted debt added, so the record that asked for
+    #: the correction can say what it did without reading the list again.
+    updated = Signal("QVariant")
 
     def __init__(self, i18n: QObject, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -372,6 +378,44 @@ class Payments(QObject):
         except Exception as exc:  # noqa: BLE001
             self.rejected.emit(str(exc))
             return
+        self.invalidated.emit()
+        self.reload()
+
+    @Slot(int, str, "QVariant")
+    def update(self, payment_id: int, kind: str, amount: object) -> None:
+        """Correct a payment's amount in place; the debt moves by the difference.
+
+        The register's own header says the correction belongs on the party's
+        record, and this is the half of that sentence the record calls: the
+        payment keeps its id and its date — it is a corrected figure, not a new
+        receipt — and the balance moves exactly as delete-then-record would
+        have moved it, in one write.
+
+        `kind` travels with the id for the same reason it does on `remove`:
+        the customer and supplier payment tables number themselves
+        independently, so the id alone does not say which row is meant.
+        """
+        value = interop.as_float(amount)
+        if value <= 0:
+            self.rejected.emit(self._i18n.text("amount.error"))
+            return
+        database = self._database()
+        if database is None:
+            return
+        try:
+            if kind == "supplier":
+                result = database.update_supplier_payment(
+                    int(payment_id), value)
+            else:
+                result = database.update_customer_payment(
+                    int(payment_id), value)
+        except Exception as exc:  # noqa: BLE001
+            self.rejected.emit(str(exc))
+            return
+        payload = dict(result)
+        payload["kind"] = "supplier" if kind == "supplier" else "customer"
+        payload["debt_text"] = fmt.money(payload.get("debt") or 0.0)
+        self.updated.emit(payload)
         self.invalidated.emit()
         self.reload()
 

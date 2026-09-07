@@ -33,8 +33,12 @@ import Mizan
  *
  * It is not a workflow dialog: a picker is part of whatever screen is asking, not a
  * destination of its own with a key and a permission, and it answers by assigning a
- * property rather than by emitting into the router. It is the same list as the
- * dropdown, given room — one data path, two presentations.
+ * property rather than by emitting into the router.
+ *
+ * The list it opens is the shared select-product table (`ProductPickerPopup`) —
+ * the same headed columns the till's own picker dialog shows, over the caller's
+ * catalogue — so "browse everything" is one surface everywhere rather than a
+ * second house style that shows three facts and drops the rest.
  *
  * SCANNING
  *
@@ -190,107 +194,25 @@ Item {
     // =====================================================================
     // THE BROWSE LIST
     // =====================================================================
-    QC.Popup {
+    /* The shared select-product popup, over the caller's catalogue. `all` is
+       what it reads, `browsed` is when the caller loads it, and a choice comes
+       back through `take` like a dropdown pick — one data path, two
+       presentations. */
+    ProductPickerPopup {
         id: browse
 
-        parent: QC.Overlay.overlay
-        anchors.centerIn: QC.Overlay.overlay
-        width: Math.min(760, finder.Window.width - 2 * Tokens.spacing.xxl)
-        height: Math.min(620, finder.Window.height - 2 * Tokens.spacing.xxl)
-        padding: Tokens.spacing.md
-        modal: true
-        focus: true
+        catalogue: finder.all.length > 0 ? finder.all : finder.results
 
-        background: Rectangle {
-            color: Fluent.popupBackground
-            radius: Tokens.radius.lg
-            border.width: 1
-            border.color: Fluent.dividerBorder
-        }
-
-        onOpened: sieve.forceActiveFocus()
-
-        contentItem: ColumnLayout {
-            spacing: Tokens.spacing.sm
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Tokens.spacing.sm
-
-                Text {
-                    Layout.fillWidth: true
-                    text: Strings.t("selector.all_products", "All products")
-                    font.family: Tokens.font.family
-                    font.pixelSize: Tokens.font.subtitle
-                    font.weight: Font.DemiBold
-                    color: Fluent.textPrimary
-                }
-
-                IconButton {
-                    glyph: "ic_fluent_dismiss_20_regular"
-                    glyphSize: Tokens.icon.sm
-                    onClicked: browse.close()
-                }
-            }
-
-            /* Its own filter, over the caller's full list. Filtered here rather than
-               by another round trip: the list is already in memory, and a browse
-               popup that lags behind the keyboard is worse than the dropdown it was
-               opened instead of. */
-            QC.TextField {
-                id: sieve
-                Layout.fillWidth: true
-                Layout.preferredHeight: Tokens.size.control
-                placeholderText: Strings.t("products.search.ph",
-                                           "Search by name or barcode")
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-            }
-
-            ListView {
-                id: shelf
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
-                QC.ScrollBar.vertical: FluentScrollBar { }
-
-                model: {
-                    var needle = sieve.text.trim().toLowerCase()
-                    var source = finder.all.length > 0 ? finder.all : finder.results
-                    if (needle === "")
-                        return source
-                    var out = []
-                    for (var i = 0; i < source.length; i++) {
-                        var row = source[i]
-                        if (String(row.name).toLowerCase().indexOf(needle) >= 0
-                                || String(row.barcode || "").toLowerCase()
-                                   .indexOf(needle) >= 0)
-                            out.push(row)
-                    }
-                    return out
-                }
-
-                delegate: Row_ { }
-            }
-
-            Text {
-                Layout.fillWidth: true
-                visible: shelf.count === 0
-                horizontalAlignment: Text.AlignHCenter
-                text: Strings.t("state.no_results.title", "No matches")
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                color: Fluent.textTertiary
-            }
-        }
+        onPicked: (product) => finder.take(product)
     }
 
     // =====================================================================
-    // ONE ROW, BOTH LISTS
+    // ONE ROW, THE DROPDOWN
     // =====================================================================
-    /* Declared once and used by the dropdown and the browse list, so a product
-       reads identically wherever it is chosen from. */
+    /* The dropdown's row. The browse list moved to the shared select-product
+       table, which has a column of its own for each fact; this stays because a
+       dropdown under a search field is read at a glance, and two lines of name
+       plus "which one matched" is what it is for. */
     component Row_: Rectangle {
         id: hit
 

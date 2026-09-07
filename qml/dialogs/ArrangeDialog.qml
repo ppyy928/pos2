@@ -65,10 +65,23 @@ import Mizan
  *   kills PosTile's own press states, and `dragFrom` was never bound to a single
  *   visual property. There was no way to see what you had hold of.
  *
+ *   THE DRAGGED TILE NEVER MOVED, AND THE DRAG COULD WEDGE.  The release code
+ *   promised "the handler wrote x and y directly while dragging" — but nothing
+ *   did: the tile stayed frozen in its cell, and the moment auto-scroll carried
+ *   the viewport 320px past it, the delegate was destroyed with the DragHandler
+ *   inside it. The release branch never ran, `dragIndex` stayed set, the grid
+ *   stayed un-flickable, and the auto-scroll timer kept stepping on a stale
+ *   point forever. From the operator's side: the card is held, it is dragged,
+ *   and then it is gone. The follow is real now, every delegate is kept alive
+ *   for the duration of a drag, and a destroyed holder cancels the drag
+ *   instead of wedging it.
+ *
  * So: no `Drag`, no `DropArea`. The target is computed from the pointer with
- * `GridView.indexAt`, the handler takes the grab and keeps it, the grid stops
- * flicking while a drag is live, the edges auto-scroll, and the lift is on the
- * delegate.
+ * `GridView.indexAt`, the handler takes the grab and keeps it, the tile
+ * follows the finger in the cell's own frame (so the follow holds whether or
+ * not the grid scrolled underneath), the grid stops flicking while a drag is
+ * live and grows its cache to keep the drag's delegate alive, the edges
+ * auto-scroll, and the lift is on the delegate.
  *
  * Favourites are the same idea one level up: the first tab on the till, filled by
  * hand, for the twenty things that sell all day. The star both shows and sets.
@@ -136,12 +149,29 @@ AppDialog {
        on the product name. */
     readonly property int starSize: 32
 
-    function reload() {
+    function reload(keepScroll) {
         if (!ctrl) {
             rows = []
             return
         }
+        /*
+         * WHERE THE VIEW IS LOOKING, KEPT ACROSS THE REBUILD WHEN ASKED.
+         *
+         * `reload` is two callers: a tab pick, which is a different list and
+         * owes the operator the top, and an outside change — a star toggled, a
+         * category renamed — where the list is the SAME one, one glyph
+         * different, and losing the offset would answer a tap on a star with a
+         * jump to the top. `keepScroll` says which; the default (undefined) is
+         * the pick, so no existing call had to change its mind.
+         */
+        var hold = keepScroll === true ? grid.contentY : -1
+        if (hold < 0) {
+            settle.stop()
+            dialog.scrollHold = -1
+        }
         rows = onFavorites ? ctrl.favorites() : ctrl.productsInCategory(tab)
+        if (hold >= 0)
+            dialog.holdScroll(hold)
     }
 
     function pick(key) {
@@ -177,6 +207,34 @@ AppDialog {
     /* Where the finger is, in scene coordinates. Written by the handler on every
        move and read by the auto-scroll timer, which has no pointer of its own. */
     property point dragPoint: Qt.point(-1, -1)
+
+    /* The tile being dragged, and where the finger took hold on it. Written when
+       a drag starts, read by followDrag() from both pointer moves and
+       auto-scroll steps. A var, not an Item: the delegate is dynamic and this is
+       a handle, not a parent. */
+    property var dragFloater: null
+    property point dragGrab: Qt.point(0, 0)
+
+    /*
+     * Pin the dragged tile to the finger.
+     *
+     * Called from TWO places, and the second is why it is a function: the
+     * pointer moves, and the content moves. Auto-scroll shifts the grid under a
+     * finger that is standing still, and the tile is parented to a cell that
+     * just travelled with the content — so without this call a long scroll
+     * would leave the tile a viewport's width away from the finger holding it.
+     *
+     * Written imperatively into x and y; the release branch restores the
+     * centring bindings, which a plain assignment would have destroyed for the
+     * rest of the delegate's life.
+     */
+    function followDrag() {
+        if (dragIndex < 0 || dragFloater === null || dragFloater.parent === null)
+            return
+        var local = dragFloater.parent.mapFromItem(null, dragPoint.x, dragPoint.y)
+        dragFloater.x = local.x - dragGrab.x
+        dragFloater.y = local.y - dragGrab.y
+    }
 
     readonly property int pickedIndex: dialog.indexOfId(dialog.pickedId)
 
@@ -241,16 +299,11 @@ AppDialog {
         next[to] = moved
 
         /*
-         * Where the grid was looking, saved across the model swap.
-         *
-         * `rows = next` reassigns GridView.model, which rebuilds every delegate and
-         * lands the view back at the top. So a swap made on the ninth row used to
-         * answer by throwing the operator to the first — and after a drag that had
-         * auto-scrolled to get there, the pair of them reads as the list scrolling
-         * away on its own and refusing to stop.
-         *
-         * Two tiles trading places cannot change the content height, so the old
-         * offset is still exactly the right one.
+         * Where the grid was looking, saved across the model swap. Two tiles
+         * trading places cannot change the content height, so the old offset
+         * is still exactly the right one — and `to` is where the moved tile
+         * lands, so it is what the hold brings into view if anything must
+         * move at all.
          */
         var keepY = grid.contentY
 
@@ -259,7 +312,7 @@ AppDialog {
         dialog.flashIds = [next[from].id, next[to].id]
         dialog.pickedId = -1
         rows = next
-        dialog.holdScroll(keepY)
+        dialog.holdScroll(keepY, to)
         dialog.pendingCommit = true
         flash.restart()
 
@@ -323,10 +376,14 @@ AppDialog {
         ignoreUnknownSignals: true
         /* Reload for the things that are not this swap: a favourite toggled, a
            category renamed elsewhere. Our own reorder comes back identical, and
-           rebuilding forty delegates to learn that is a frame nobody needs. */
+           rebuilding forty delegates to learn that is a frame nobody needs.
+
+           `true` keeps the offset: an outside change to THIS list is not a
+           navigation, and a star that answered with a jump to the top is the
+           same complaint the swap's reset was. */
         function onChanged() {
             if (!dialog.committing)
-                dialog.reload()
+                dialog.reload(true)
         }
         function onRejected(message) { error.text = message }
     }
@@ -436,23 +493,81 @@ AppDialog {
             return
 
         grid.contentY = next
-        /* The content moved under a finger that did not: whatever is beneath it now
-           is a different tile. */
+        /* The content moved under a finger that did not: whatever is beneath it
+           now is a different tile, and the tile in hand has just travelled with
+           its cell — pin it back to the finger it belongs to. */
         dialog.overIndex = dialog.indexUnder(dialog.dragPoint)
+        dialog.followDrag()
     }
 
-    /* Put the view back where it was looking after a model swap, once now and once
-       after the view has relaid out — GridView moves contentY itself while
-       rebuilding, and that happens after this stack unwinds. */
-    function holdScroll(y) {
-        grid.contentY = dialog.clampScroll(y)
+    /*
+     * Where the view must stay until the rebuild settles, or -1.
+     *
+     * THE OLD HOLD WAS ONE `Qt.callLater` TOO FEW.
+     *
+     * Replacing `rows` rebuilds the grid, and the view resets contentY to 0
+     * during its own polish pass — which runs AFTER every callLater callback
+     * queued before it. So the old holdScroll put the offset back twice, both
+     * times before the reset, and a swap made on the ninth row still answered
+     * by throwing the operator to the first — taking the flash rings, the one
+     * thing that says "this is what moved", off the bottom of the screen with
+     * it. That is "after any action it scrolls to the top", exactly as
+     * reported.
+     *
+     * So the hold is a property the view itself is made to respect: for as
+     * long as `settle` is running, any contentY that is not the held offset —
+     * the model-swap reset, a polish, a late relayout — is written straight
+     * back. A timer rather than a count of passes, because the number of
+     * passes between a model change and a settled view is neither one nor
+     * fixed; 180ms is several frames, imperceptible to a hand, and shorter
+     * than the fastest deliberate scroll anyone makes after a swap.
+     */
+    property real scrollHold: -1
+
+    Timer {
+        id: settle
+        interval: 180
+        onTriggered: dialog.scrollHold = -1
+    }
+
+    /* Put the view back where it was looking after a model swap, and keep it
+       there until the rebuild settles. `ensureIndex`, when given, is first
+       brought into view — the slot the moved tile landed in — so "what I
+       moved" is on screen even if the hold had to be clamped. Contain, not
+       Center: a slot that is already visible must not move.
+
+       The freeze is LIFTED for the contain, not fought against it: armed at
+       the old offset, the guard would veto the very scroll the contain is
+       there to make. Disarm, contain, re-arm on whatever offset that chose —
+       the three statements share one pass, so the model-swap reset cannot slip
+       in between them. */
+    function holdScroll(y, ensureIndex) {
+        dialog.scrollHold = dialog.clampScroll(y)
+        /* Written directly as well, because the model swap resets contentY
+           SYNCHRONOUSLY at the `rows =` assignment — before this is reached,
+           and therefore before there is a guard to catch it. The arm alone
+           would hold whatever the reset left behind: the top. */
+        grid.contentY = dialog.scrollHold
+        settle.restart()
         Qt.callLater(function () {
-            grid.contentY = dialog.clampScroll(y)
+            dialog.scrollHold = -1
+            if (ensureIndex !== undefined && ensureIndex >= 0
+                    && ensureIndex < rows.length)
+                grid.positionViewAtIndex(ensureIndex, GridView.Contain)
+            dialog.scrollHold = dialog.clampScroll(grid.contentY)
         })
     }
 
     function clampScroll(y) {
-        return Math.max(0, Math.min(Math.max(0, grid.contentHeight - grid.height), y))
+        /* Not measurable yet: right after a model swap, contentHeight reads 0
+           for a pass, and clamping against it would "hold" the view at the top
+           — the very jump this freeze exists to prevent. The raw offset is the
+           honest answer until the content has a height again; the view settles
+           the rest itself once it does. */
+        if (grid.contentHeight <= 0)
+            return Math.max(0, y)
+        var limit = Math.max(0, grid.contentHeight - grid.height)
+        return Math.max(0, Math.min(limit, y))
     }
 
     Timer {
@@ -512,10 +627,36 @@ AppDialog {
                 cellWidth: Math.max(1, Math.floor(width / columns))
                 cellHeight: Tokens.size.tile + gap
 
+                /* Every delegate alive while a drag is live. The default 320px
+                   buffer destroys a cell once auto-scroll has carried the viewport
+                   320px past it — including the cell that holds the drag, which
+                   takes the handler, the release branch and the swap with it.
+                   A whole wall here is a few dozen tiles; instantiating them all
+                   for the duration of one drag is what keeps the dragged one
+                   real, and the buffer goes back to 320 the moment it ends. */
+                cacheBuffer: dialog.dragIndex >= 0
+                             ? Math.max(320,
+                                        dialog.rows.length * grid.cellHeight)
+                             : 320
+
                 /* A Flickable and a drag cannot both own the pointer. The handler
                    below takes the grab; this makes sure the grid does not try to
                    take it back halfway through and turn a swap into a scroll. */
                 interactive: dialog.dragIndex < 0
+
+                /* The freeze, enforced where it has to be: the view resets
+                   contentY during its own polish pass, after every callLater
+                   queued before it, so the hold is only real if the view itself
+                   is made to respect it. Inert whenever scrollHold is -1 — a
+                   drag's auto-scroll, a deliberate flick, a tab pick's fresh
+                   start. */
+                onContentYChanged: {
+                    if (dialog.scrollHold < 0)
+                        return
+                    var want = dialog.clampScroll(dialog.scrollHold)
+                    if (contentY !== want)
+                        contentY = want
+                }
 
                 QC.ScrollBar.vertical: FluentScrollBar {
                     policy: QC.ScrollBar.AsNeeded
@@ -545,6 +686,30 @@ AppDialog {
                      * tile still passed under every cell created after it.
                      */
                     z: cell.dragging ? 3 : (cell.picked ? 2 : 0)
+
+                    /*
+                     * A CANCELLED DRAG, NOT A WEDGED ONE.
+                     *
+                     * If this cell is destroyed while it holds the live drag, the
+                     * handler is destroyed with it and nothing will ever run the
+                     * release branch — so `dragIndex` would stay set, the grid
+                     * would stay un-flickable, and the auto-scroll timer would
+                     * keep stepping on a stale pointer position forever. The
+                     * cacheBuffer above is what keeps this from firing during an
+                     * auto-scroll; this guard is what keeps a destroyed holder
+                     * (a reload landing mid-drag) from wedging the dialog anyway.
+                     *
+                     * Nothing is swapped: the gesture never reached a decision,
+                     * and the tile is wherever its row says it is.
+                     */
+                    Component.onDestruction: {
+                        if (dialog.dragIndex === cell.index) {
+                            dialog.dragIndex = -1
+                            dialog.overIndex = -1
+                            dialog.scrollClock = 0
+                            dialog.dragFloater = null
+                        }
+                    }
 
                     Item {
                         id: floater
@@ -623,7 +788,12 @@ AppDialog {
                                     return 3
                                 if (cell.over)
                                     return 4
-                                return cell.flashing ? 3 : 0
+                                /* As wide as the target ring. The flash is the
+                                   answer to "what did I just do" and it only
+                                   has the 1400ms to say it — at 3px it read as
+                                   one more state line rather than as the
+                                   event. */
+                                return cell.flashing ? 4 : 0
                             }
                             border.color: floater.ringColor
                             visible: border.width > 0
@@ -655,8 +825,8 @@ AppDialog {
                             grabPermissions: PointerHandler.CanTakeOverFromAnything
 
                             /* Where the finger is, in scene coordinates — the only
-                               frame of reference that survives the grid scrolling
-                               underneath it. */
+                                frame of reference that survives the grid scrolling
+                                underneath it. */
                             readonly property point scenePoint: handler.centroid.scenePosition
 
                             onScenePointChanged: {
@@ -664,6 +834,10 @@ AppDialog {
                                     return
                                 dialog.dragPoint = handler.scenePoint
                                 dialog.overIndex = dialog.indexUnder(handler.scenePoint)
+                                /* The tile follows — see followDrag, and the
+                                   finger, not the tile's centre, is what the
+                                   target answers to. */
+                                dialog.followDrag()
                             }
 
                             onActiveChanged: {
@@ -675,6 +849,16 @@ AppDialog {
                                     dialog.pickedId = -1
                                     dialog.flashIds = []
                                     dialog.dragPoint = handler.scenePoint
+                                    /* Where the finger took hold, measured from the
+                                       floater's corner: the follow keeps that point
+                                       of the card under the finger, not the card's
+                                       corner. */
+                                    var hold = cell.mapFromItem(
+                                        null, handler.scenePoint.x,
+                                        handler.scenePoint.y)
+                                    dialog.dragGrab = Qt.point(hold.x - floater.x,
+                                                               hold.y - floater.y)
+                                    dialog.dragFloater = floater
                                     dialog.scrollClock = 0
                                     return
                                 }
@@ -684,15 +868,17 @@ AppDialog {
                                 dialog.dragIndex = -1
                                 dialog.overIndex = -1
                                 dialog.scrollClock = 0
+                                dialog.dragFloater = null
 
-                                /* Back into its cell. Restored as a BINDING: the
-                                   handler wrote x and y directly while dragging, and
-                                   a plain assignment would leave them literal for
-                                   the rest of this delegate's life. The x binding is
-                                   the centring one declared above, not a margin —
-                                   restoring the wrong expression would leave every
-                                   dragged tile flush against its cell's leading
-                                   edge while its neighbours stayed centred. */
+                                /* Back into its cell. Restored as a BINDING:
+                                   followDrag() wrote x and y directly while the
+                                   tile was in hand, and a plain assignment would
+                                   leave them literal for the rest of this
+                                   delegate's life. The x binding is the centring
+                                   one declared above, not a margin — restoring
+                                   the wrong expression would leave every dragged
+                                   tile flush against its cell's leading edge
+                                   while its neighbours stayed centred. */
                                 floater.x = Qt.binding(function () {
                                     return Math.round((grid.cellWidth
                                                        - floater.width) / 2)

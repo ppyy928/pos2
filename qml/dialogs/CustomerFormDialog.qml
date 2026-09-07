@@ -81,6 +81,9 @@ AppDialog {
        account should see it, not a refusal where the record was. */
     readonly property bool canManage: session ? session.can("customers.manage") : true
     readonly property bool canSell: session ? session.can("pos.sell") : true
+    /* The same right the sales page's pen asks for: rewriting a completed sale
+       moves stock and this customer's debt, so `sales.edit` is the gate. */
+    readonly property bool canEditSales: session ? session.can("sales.edit") : true
 
     preferredWidth: 1240
     preferredHeight: 900
@@ -106,9 +109,19 @@ AppDialog {
     readonly property bool owes: debt > 0
 
     /* The payment panel, folded away until there is a payment to take. Opened by
-       its own button, and opened for the operator when the row action that brought
-       them here was "take a payment". */
+        its own button, and opened for the operator when the row action that brought
+        them here was "take a payment". While a payment is being CORRECTED it holds
+        that payment instead: `editingPayment` is the row from the list above, and
+        the panel answers through the payments register rather than by recording. */
     property bool paying: false
+    property var editingPayment: null
+
+    /* What a correction is measured against. The payment being corrected was
+       already taken, so the account can absorb a figure up to the debt PLUS
+       that payment: correcting 500 to 700 on a 300 debt is "they actually paid
+       700 of the 800 they owed", which leaves 100 — not an overpayment. */
+    readonly property real correctedBase: editingPayment
+                                         ? Number(editingPayment.amount) : 0
 
     property string salesQuery: ""
     property string paymentsQuery: ""
@@ -171,6 +184,11 @@ AppDialog {
     }
 
     function openPayment() {
+        /* A new payment, never a leftover correction: the button and the pen
+           are two different questions, and the panel has to know which one it
+           is answering. */
+        editingPayment = null
+        amount.text = ""
         paying = true
         amount.forceActiveFocus()
     }
@@ -203,6 +221,33 @@ AppDialog {
         workflows.open("sale_transaction", { sale_id: sale.id })
     }
 
+    /*
+     * The invoice is corrected on the TILL, exactly as the sales page's pen
+     * does it — the same screen it was rung up on, the same gestures, and the
+     * same refusal when the till is holding a cart that has not been dealt
+     * with.
+     *
+     * Load first, THEN navigate: loadSale refuses a busy cart, and being
+     * thrown onto the till with the old cart still on it and a refusal behind
+     * the page is the one outcome to avoid. The refusal arrives on
+     * `pos.rejected`, which the Connections below put into this dialog's own
+     * error line — modal, so the page's toast is behind the scrim.
+     */
+    function editSale(row) {
+        var sale = saleAt(row)
+        if (!sale)
+            return
+        if (!till) {
+            error.text = Strings.t("workflow.not_ready",
+                                   "That screen is not part of this build yet.")
+            return
+        }
+        if (till.loadSale(sale.id)) {
+            Destinations.request("pos")
+            dialog.close()
+        }
+    }
+
     function printSale(row) {
         var sale = saleAt(row)
         if (!sale)
@@ -228,6 +273,21 @@ AppDialog {
         confirmDeletePayment.open()
     }
 
+    /* The pen on a payment row: the same panel that takes one, holding the row
+       it is going to correct. The amount field opens on the recorded figure,
+       selected, so the first keystroke replaces it — the panel's own rule for a
+       figure being corrected. */
+    function askEditPayment(row) {
+        var payment = paymentAt(row)
+        if (!payment || !canManage)
+            return
+        editingPayment = payment
+        paying = true
+        amount.text = String(payment.amount)
+        amount.forceActiveFocus()
+        amount.selectAll()
+    }
+
     // -- money ------------------------------------------------------------
     function money(value) {
         return ctrl ? ctrl.moneyText(value) : "—"
@@ -239,18 +299,30 @@ AppDialog {
     }
 
     readonly property real entered: number(amount.text)
-    readonly property real remaining: Math.max(0, debt - entered)
-    readonly property bool validPayment: entered > 0 && entered <= debt
+    /* While correcting, the old figure is returned to the account first —
+       that is what "the balance moves by the difference" means here, and it is
+       why the ceiling and the remainder both add `correctedBase`. */
+    readonly property real remaining: Math.max(0, debt + correctedBase - entered)
+    readonly property bool validPayment: entered > 0
+                                         && entered <= debt + correctedBase
 
     function pay() {
         error.text = ""
         notice = ""
         if (!validPayment) {
-            error.text = entered > debt
+            error.text = entered > debt + correctedBase
                          ? Strings.t("payments.over_debt",
                                      "That is more than this customer owes.")
                          : Strings.t("amount.error", "Enter a valid amount.")
             amount.forceActiveFocus()
+            return
+        }
+        /* A correction is the register's business, not this controller's: the
+           register owns the payment tables for both kinds of party, and it is
+           what answers with the new balance. */
+        if (editingPayment) {
+            if (paymentsCtrl)
+                paymentsCtrl.update(editingPayment.id, "customer", amount.text)
             return
         }
         if (ctrl)
@@ -353,13 +425,16 @@ AppDialog {
             ltr: true,
             tone: function (r) { return r.owes ? "danger" : "" }
         },
-        /* A row on this list is a ticket: look at it, or hand the customer a copy of
-           it. Both were already reachable from the sales page and were the two things
-           an operator asked this record for and could not do without leaving it. */
+        /* A row on this list is a ticket: look at it, correct it on the till it
+           was rung up on, or hand the customer a copy of it. All three were the
+           things an operator asked this record for and could not do without
+           leaving it — the pen is the sales page's own act, same right, same
+           screen, arrived at from the history that names it. */
         {
             key: "actions",
             actions: [
                 { id: "view" },
+                { id: "edit", enabled: dialog.canEditSales },
                 { id: "print" }
             ]
         }
@@ -380,11 +455,14 @@ AppDialog {
             ltr: true,
             tone: "success"
         },
-        /* No pen: a payment is not edited, because a corrected receipt is a different
-           receipt. It is deleted — which puts the debt back — and taken again. */
+        /* The pen corrects the amount in place — the debt moves by the
+           difference, and the row keeps its date and its place in the history.
+           The bin stays for the payment that should not exist at all, which is
+           a different question from "the figure was typed wrong". */
         {
             key: "actions",
             actions: [
+                { id: "edit", enabled: dialog.canManage },
                 { id: "delete", enabled: dialog.canManage }
             ]
         }
@@ -406,10 +484,11 @@ AppDialog {
 
         function onPaid(result) {
             /* Stays open with the new balance — a customer settling an account
-               often pays against two tickets in one visit, and reopening the
-               record to do the second is a step for nothing. */
+                often pays against two tickets in one visit, and reopening the
+                record to do the second is a step for nothing. */
             amount.text = ""
             dialog.paying = false
+            dialog.editingPayment = null
             dialog.reload()
             dialog.notice = Strings.tf("payments.recorded",
                                        "Payment recorded — debt now {debt}",
@@ -428,13 +507,52 @@ AppDialog {
     }
 
     /* The payments register refuses out loud, on whichever screen asked it to: this
-       record can now delete a payment, so it has to be able to hear "no". */
+        record can now correct and delete a payment, so it has to be able to hear
+        "no" — and it hears "done" the same way, because a correction is the
+        register's write, not this controller's. */
     Connections {
         target: dialog.paymentsCtrl
         ignoreUnknownSignals: true
 
         function onRejected(message) {
             error.text = message
+        }
+
+        function onUpdated(result) {
+            /* Gated on the panel being open in correct mode: the register
+               reports every payment corrected anywhere, and this dialog is
+               modal — but a plain guard is cheaper than an argument about
+               what can happen behind a scrim. */
+            if (!dialog.visible || dialog.editingPayment === null)
+                return
+            amount.text = ""
+            dialog.editingPayment = null
+            dialog.paying = false
+            dialog.reload()
+            dialog.notice = Strings.tf("payments.corrected",
+                                       "Payment corrected — debt now {debt}",
+                                       { debt: result.debt_text })
+        }
+
+        /* A payment moved this account — the register deletes and corrects as
+           well as records — and the figures at the top are the reason this
+           record is open. */
+        function onInvalidated() {
+            dialog.reload()
+        }
+    }
+
+    /* The till's refusals while this record asked it to hold a sale for
+       rewriting: `loadSale` says "finish or void the current cart first", and
+       that sentence has to land somewhere the operator can read it — modal, so
+       the page's toast is behind the scrim. */
+    Connections {
+        target: dialog.till
+        ignoreUnknownSignals: true
+
+        function onRejected(message) {
+            if (dialog.visible)
+                error.text = message
         }
     }
 
@@ -700,10 +818,15 @@ AppDialog {
             ]
 
             /* Leaving the payments section folds its payment panel away again, so
-               coming back to it is a decision rather than a leftover. */
+                coming back to it is a decision rather than a leftover — and a
+                correction is folded away with it: the row it was aimed at is on
+                the section being left. */
             onActivated: (key) => {
-                if (key !== "payments")
+                if (key !== "payments") {
                     dialog.paying = false
+                    dialog.editingPayment = null
+                    amount.text = ""
+                }
             }
         }
 
@@ -763,6 +886,8 @@ AppDialog {
                     onActionTriggered: (row, action) => {
                         if (action === "view")
                             dialog.openSale(row)
+                        else if (action === "edit")
+                            dialog.editSale(row)
                         else if (action === "print")
                             dialog.printSale(row)
                     }
@@ -821,7 +946,13 @@ AppDialog {
 
                         Field {
                             Layout.maximumWidth: 320
-                            label: Strings.t("amount.entered", "Amount")
+                            /* The word says which question the panel is
+                               answering: taking money, or correcting the figure
+                               that was taken. */
+                            label: dialog.editingPayment
+                                   ? Strings.t("payments.edit.amount",
+                                               "Corrected amount")
+                                   : Strings.t("amount.entered", "Amount")
                             required: true
 
                             RowLayout {
@@ -837,12 +968,38 @@ AppDialog {
 
                                 /* Settling in full is the common case, and
                                    retyping six figures at a counter is where
-                                   mistakes come from. */
+                                   mistakes come from. While correcting, "all"
+                                   is the debt plus the payment being corrected:
+                                   the figure that leaves the account at
+                                   zero. */
                                 GlyphButton {
                                     text: Strings.t("amount.all", "All")
-                                    onClicked: amount.text = String(dialog.debt)
+                                    onClicked: amount.text = String(
+                                        dialog.debt + dialog.correctedBase)
                                 }
                             }
+                        }
+
+                        /* What is being corrected, named: the panel sits below
+                           the list, and "which payment am I rewriting" is a
+                           question a number field cannot answer. The sentence
+                           also states the rule — replaces, not adds — which is
+                           the one mistake a correction panel exists to
+                           prevent. Sized to its content rather than filled:
+                           the filler below keeps the column and the buttons
+                           where they are in either mode. */
+                        Text {
+                            visible: dialog.editingPayment !== null
+                            text: Strings.tf("payments.edit.hint",
+                                             "Replaces {amount} — the balance moves by the difference.",
+                                             { amount: dialog.editingPayment
+                                               ? dialog.editingPayment.amount_text
+                                               : "" })
+                            elide: Text.ElideRight
+                            maximumLineCount: 1
+                            font.family: Tokens.font.family
+                            font.pixelSize: Tokens.font.caption
+                            color: Fluent.textTertiary
                         }
 
                         Item { Layout.fillWidth: true }
@@ -890,6 +1047,7 @@ AppDialog {
                                 amount.text = ""
                                 error.text = ""
                                 dialog.paying = false
+                                dialog.editingPayment = null
                             }
                         }
                     }
@@ -906,7 +1064,9 @@ AppDialog {
                                : Strings.t("customer.no_payments",
                                            "Nothing has been paid against this account.")
                     onActionTriggered: (row, action) => {
-                        if (action === "delete")
+                        if (action === "edit")
+                            dialog.askEditPayment(row)
+                        else if (action === "delete")
                             dialog.askDeletePayment(row)
                     }
                 }

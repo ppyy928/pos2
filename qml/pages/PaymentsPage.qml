@@ -10,14 +10,18 @@ import Mizan
  *
  * One list rather than two, because the question is almost always "was this paid",
  * not "was this paid by a customer" — the kind is a column and a filter, not a
- * separate screen. Deleting a payment gives the debt back, so it is the one row
- * action here and it asks first.
+ * separate screen.
+ *
+ * Read-only, deliberately. A payment is money that has already changed hands, and
+ * deleting one from a register is an account correction pretending to be a tidy-up:
+ * the debt comes back, the drawer total no longer matches what was counted, and
+ * neither of those reversals is visible from this screen. The record on the party
+ * is where a wrong payment belongs, and it is where the correction is made.
  */
 Item {
     id: root
 
     readonly property var ctrl: (typeof app !== "undefined" && app) ? app.payments : null
-    readonly property var session: (typeof app !== "undefined" && app) ? app.session : null
 
     property string kind: "all"
     property string search: ""
@@ -30,7 +34,6 @@ Item {
     readonly property var stats: ctrl ? ctrl.stats : null
 
     readonly property bool hasFilter: search !== "" || kind !== "all"
-    readonly property bool canManage: session ? session.can("customers.manage") : true
 
     readonly property bool showState: !busy && (errorText !== "" || total === 0)
     readonly property string stateVariant: errorText !== "" ? "error"
@@ -66,15 +69,7 @@ Item {
             header: Strings.t("payments.col.amount", "Amount"),
             numeric: true,
             width: 240
-        },
-        {
-            key: "actions",
-            actions: root.rowActions
         }
-    ]
-
-    readonly property var rowActions: [
-        { id: "delete", enabled: root.canManage }
     ]
 
     function reload() {
@@ -87,17 +82,6 @@ Item {
         search = filters.searchText
         currentPage = 1
         reload()
-    }
-
-    function handleAction(row, action) {
-        var data = ctrl ? ctrl.rowAt(row) : null
-        if (!data || action !== "delete")
-            return
-        confirmDelete.paymentId = data.id
-        confirmDelete.paymentKind = data.kind
-        confirmDelete.party = data.party
-        confirmDelete.amount = data.amount_text
-        confirmDelete.open()
     }
 
     function statText(key) {
@@ -212,8 +196,6 @@ Item {
                 visible: !root.showState
                 columns: root.tableColumns
                 model: root.ctrl ? root.ctrl.rows : null
-
-                onActionTriggered: (row, action) => root.handleAction(row, action)
             }
 
             StateView {
@@ -243,51 +225,6 @@ Item {
                 root.pageSize = size
                 root.currentPage = 1
                 root.reload()
-            }
-        }
-    }
-
-    /* Deleting a payment is not a tidy-up: the debt it settled comes back. So the
-       confirmation names the party and the amount, which is what the operator
-       needs to be sure it is the right row. */
-    FluentDialog {
-        id: confirmDelete
-
-        property int paymentId: -1
-        property string paymentKind: "customer"
-        property string party: ""
-        property string amount: ""
-        readonly property int measure: 460
-
-        modal: true
-        title: Strings.t("payments.delete.title", "Delete this payment?")
-        standardButtons: QC.Dialog.Yes | QC.Dialog.No
-
-        onAccepted: if (root.ctrl)
-                        root.ctrl.remove(confirmDelete.paymentId,
-                                         confirmDelete.paymentKind)
-
-        contentItem: Column {
-            spacing: Tokens.spacing.sm
-
-            Text {
-                width: confirmDelete.measure
-                text: Strings.t("payments.delete.body",
-                                "The amount is added back to the debt it settled.")
-                wrapMode: Text.WordWrap
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                color: Fluent.textPrimary
-            }
-
-            Text {
-                width: confirmDelete.measure
-                text: confirmDelete.party + "  ·  \u200e" + confirmDelete.amount
-                wrapMode: Text.WordWrap
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                font.weight: Font.DemiBold
-                color: Fluent.textPrimary
             }
         }
     }

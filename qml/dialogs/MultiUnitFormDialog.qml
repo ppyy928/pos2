@@ -34,8 +34,7 @@ AppDialog {
     property var context: ({})
 
     readonly property var ctrl: (typeof app !== "undefined" && app) ? app.catalogue : null
-    readonly property var catalogueProducts: (typeof app !== "undefined" && app)
-                                             ? app.products : null
+    readonly property var stock: (typeof app !== "undefined" && app) ? app.stock : null
 
     /* Set by the host when this was opened from one product's record: the product
        is then not a question. */
@@ -136,83 +135,22 @@ AppDialog {
         }
     }
 
-    /* The same eight-match popup the purchase form uses, for the same reason:
-       three thousand products do not go in a dropdown. */
-    QC.Popup {
+    /* The shared select-product popup — the same headed table every other
+       picker opens, over the whole catalogue.
+
+       The first version of this was a popup of its own: eight name-only rows,
+       fetched per keystroke through `app.products.load`, which is the Products
+       page's controller — so opening it overwrote the rows, the total and the
+       stored query that screen was bound to. One picker means that defect is
+       gone rather than worked around. */
+    ProductPickerPopup {
         id: picker
-        width: 520
-        height: 340
-        modal: true
-        focus: true
-        anchors.centerIn: QC.Overlay.overlay
 
-        background: Rectangle {
-            color: Fluent.popupBackground
-            border.color: Fluent.flyoutBorder
-            border.width: 1
-            radius: Tokens.radius.md
-        }
+        heading: Strings.t("mu.product", "Product")
 
-        onOpened: query.forceActiveFocus()
-
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: Tokens.spacing.md
-            spacing: Tokens.spacing.sm
-
-            QC.TextField {
-                id: query
-                Layout.fillWidth: true
-                Layout.preferredHeight: Tokens.size.control
-                placeholderText: Strings.t("products.search.ph",
-                                           "Search name or barcode")
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                onTextChanged: if (dialog.catalogueProducts)
-                                   dialog.catalogueProducts.load(text, 1, 8, 0)
-            }
-
-            ListView {
-                id: matches
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                clip: true
-                model: dialog.catalogueProducts ? dialog.catalogueProducts.rows : null
-
-                QC.ScrollBar.vertical: FluentScrollBar {
-                    policy: QC.ScrollBar.AsNeeded
-                }
-
-                delegate: Rectangle {
-                    id: hit
-                    required property var modelData
-
-                    width: matches.width
-                    height: Tokens.size.control
-                    color: hover.hovered ? Fluent.subtleSecondary : "transparent"
-
-                    HoverHandler { id: hover }
-                    TapHandler {
-                        onTapped: {
-                            dialog.targetProduct = hit.modelData.id
-                            dialog.targetName = hit.modelData.name
-                            picker.close()
-                        }
-                    }
-
-                    Text {
-                        anchors.fill: parent
-                        anchors.leftMargin: Tokens.spacing.sm
-                        anchors.rightMargin: Tokens.spacing.sm
-                        verticalAlignment: Text.AlignVCenter
-                        text: hit.modelData.name
-                        font.family: Tokens.font.family
-                        font.pixelSize: Tokens.font.body
-                        color: Fluent.textPrimary
-                        elide: Text.ElideRight
-                    }
-                }
-            }
+        onPicked: (product) => {
+            dialog.targetProduct = product.id
+            dialog.targetName = product.name
         }
     }
 
@@ -251,7 +189,14 @@ AppDialog {
             GlyphButton {
                 glyph: "ic_fluent_search_20_regular"
                 text: Strings.t("selector.open_picker", "Find a product")
-                onClicked: picker.open()
+                /* Loaded on the press rather than bound: fetching the whole
+                   catalogue is a query, and a form that never opens the picker
+                   should not pay for it. */
+                onClicked: {
+                    if (dialog.stock)
+                        picker.catalogue = dialog.stock.catalogue()
+                    picker.open()
+                }
             }
         }
 

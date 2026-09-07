@@ -312,6 +312,24 @@ FluentWindowBase {
                 shellToasts.show(message, Severity.caution)
             }
         }
+
+        /* The session ended from somewhere that was not the login form — the
+           idle lock, today — and the shell has to land where signing out
+           lands: no operator, no dialogs, login layer up. Signing IN is not
+           handled here; the login layer's own `authenticated` signal is that
+           path, and this only ever clears. */
+        Connections {
+            target: (typeof app !== "undefined" && app) ? app.session : null
+            ignoreUnknownSignals: true
+
+            function onChanged() {
+                if (!app.session.signedIn && window.currentUser !== null) {
+                    Diag.action("shell", "session ended — locking")
+                    window.currentUser = null
+                    dialogs.closeAll()
+                }
+            }
+        }
     }
 
     // =====================================================================

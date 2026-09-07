@@ -91,7 +91,7 @@ SPECS: dict[str, Spec] = {
     # — the balance, the sales, the payments — and `customer_edit` is the form that
     # corrects the details on it. The record opens the form itself as a child dialog
     # (DialogHost shows one at a time), so this key is only how the customers page
-    # and the till's picker reach the form when there is no record yet. Hence the
+    # and the till reach the form when there is no record yet. Hence the
     # manage right on it: opening a blank form is only useful to someone who may
     # save it.
     "customer_form": Spec("customers.view", "customers.edit_title"),

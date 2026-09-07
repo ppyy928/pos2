@@ -46,6 +46,7 @@ the operator is never waiting on a spinner for a picture.
 
 from __future__ import annotations
 
+import math
 import os
 import tempfile
 from typing import Any
@@ -81,6 +82,8 @@ class Printing(QObject):
     busyChanged = Signal()
     errorChanged = Signal()
     labelFormatChanged = Signal()
+    labelFlagsChanged = Signal()
+    labelSizeChanged = Signal()
 
     #: Internal, pool thread -> GUI thread: (what, count, error). A plain signal
     #: rather than a callback because a cross-thread signal is the one hand-off Qt
@@ -223,6 +226,102 @@ class Printing(QObject):
             self._set_error(str(exc))
             return
         self.labelFormatChanged.emit()
+
+    # =====================================================================
+    # WHAT THE LABEL CARRIES
+    # =====================================================================
+    #: The content switches the sheet and the Settings page share. Written as
+    #: "barcode.<key>" in the same store both screens read, so a toggle made at
+    #: the sheet is the Settings page's state too, and vice versa.
+    _FLAG_KEYS = ("show_store", "show_name", "show_price")
+
+    @Property("QVariant", notify=labelFlagsChanged)
+    def labelFlags(self) -> dict:
+        """The three content switches, as {show_store, show_name, show_price}.
+
+        Read through the engine's own `load_label_options` rather than straight
+        from the store, so what the switches claim and what the renderer will
+        do cannot be two different maps of the same keys.
+
+        Not constant: both surfaces write these keys, and a property that never
+        re-notified would leave whichever screen was opened first showing the
+        other one's stale state.
+        """
+        try:
+            options = legacy.labels().load_label_options()
+        except Exception:  # noqa: BLE001
+            diagnostics.log.debug("label flags unavailable", exc_info=True)
+            return {key: True for key in self._FLAG_KEYS}
+        return {key: bool(options.get(key)) for key in self._FLAG_KEYS}
+
+    @Slot(str, bool)
+    def setLabelFlag(self, key: str, on: bool) -> None:
+        """Turn one content switch, and keep it — the same contract as the
+        design choice above: a property of the shop's labels, not of one print
+        run, which is why the Settings page shows the same three switches."""
+        name = str(key or "")
+        if name not in self._FLAG_KEYS:
+            return
+        try:
+            legacy.database().set_setting(f"barcode.{name}", "1" if on else "0")
+        except Exception as exc:  # noqa: BLE001
+            self._set_error(str(exc))
+            return
+        self.labelFlagsChanged.emit()
+
+    # =====================================================================
+    # HOW BIG THE LABEL IS
+    # =====================================================================
+    #: The roll a thermal label printer can actually feed, in millimetres.
+    #: Outside it the renderer would happily draw a sticker the hardware
+    #: cannot print, and the preview would show a label that cannot exist.
+    _WIDTH_MIN_MM, _WIDTH_MAX_MM = 20.0, 100.0
+    _HEIGHT_MIN_MM, _HEIGHT_MAX_MM = 10.0, 70.0
+
+    def _label_mm(self, key: str, default: str) -> float:
+        try:
+            return float(
+                legacy.database().get_setting(key, default) or default
+            )
+        except Exception:  # noqa: BLE001
+            diagnostics.log.debug("%s unreadable", key, exc_info=True)
+            return float(default)
+
+    @Property(float, notify=labelSizeChanged)
+    def labelWidth(self) -> float:
+        """The roll's width in mm — the same `barcode.label_width` the Settings
+        page holds, read live so the sheet's fields can never disagree with
+        the store."""
+        return self._label_mm("barcode.label_width", "40")
+
+    @Property(float, notify=labelSizeChanged)
+    def labelHeight(self) -> float:
+        return self._label_mm("barcode.label_height", "25")
+
+    @Slot(float)
+    def setLabelWidth(self, mm: float) -> None:
+        self._set_label_mm("barcode.label_width", mm,
+                           self._WIDTH_MIN_MM, self._WIDTH_MAX_MM)
+
+    @Slot(float)
+    def setLabelHeight(self, mm: float) -> None:
+        self._set_label_mm("barcode.label_height", mm,
+                           self._HEIGHT_MIN_MM, self._HEIGHT_MAX_MM)
+
+    def _set_label_mm(self, key: str, mm: float, low: float, high: float) -> None:
+        try:
+            value = float(mm)
+        except (TypeError, ValueError):
+            return
+        if math.isnan(value):  # from a field that was emptied
+            return
+        value = min(high, max(low, value))
+        try:
+            legacy.database().set_setting(key, f"{value:g}")
+        except Exception as exc:  # noqa: BLE001
+            self._set_error(str(exc))
+            return
+        self.labelSizeChanged.emit()
 
     # =====================================================================
     # PREVIEW

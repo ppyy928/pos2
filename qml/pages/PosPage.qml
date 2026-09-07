@@ -45,7 +45,7 @@ import Mizan
  *             cartNumber, totalText, currencyText, itemsText, qtyText,
  *             discountText
  *             customerName, customerPhone, hasCustomer
- *             remainingText, paidValid, allowPartial
+ *             remainingText, paid, paidText, paidValid, allowPartial
  *   call      loadCategories(), loadTiles(tab, search)
  *             add(productId), setQty(row, qty), remove(row), clear(), hold()
  *             resolve(text), scan(code), addFreeAmount(sign, amount)
@@ -158,6 +158,12 @@ Item {
     /* -1 is "nothing chosen", not "row 0". */
     property int selectedRow: -1
 
+    /* True from the press on the add button beside the customer field until the
+       customer that press is making comes back. `saved` is emitted for every
+       customer written anywhere in the app, so the gate is what keeps an
+       unrelated write from landing on this sale. */
+    property bool awaitingNewCustomer: false
+
 
     // =====================================================================
     // DERIVED
@@ -165,6 +171,7 @@ Item {
     readonly property bool busy: ctrl ? ctrl.busy : false
     readonly property string errorText: ctrl ? ctrl.error : ""
     readonly property bool allowPartial: ctrl ? ctrl.allowPartial : true
+    readonly property bool allowDebt: ctrl ? ctrl.allowDebt : true
     readonly property bool paidValid: ctrl ? ctrl.paidValid : false
     readonly property bool hasCustomer: ctrl ? ctrl.hasCustomer : false
 
@@ -197,8 +204,16 @@ Item {
        `session.revision` first, for canArrange's reason: can() is a slot, so a
        binding that only calls it never re-evaluates. */
     readonly property bool canPickCustomer: session
-                                            && session.revision >= 0
-                                            && session.can("customers.view")
+                                             && session.revision >= 0
+                                             && session.can("customers.view")
+
+    /* Whether the add button beside the customer field may be pressed: the same
+       `customers.manage` the router checks on `customer_edit`, asked here so the
+       button answers with a dim rather than a form whose Save would be refused.
+       session.revision first, for canPickCustomer's reason. */
+    readonly property bool canAddCustomer: session
+                                           && session.revision >= 0
+                                           && session.can("customers.manage")
 
     /* Whether the shelf question may offer to fix the shelf. Same right the
        `stock_adjust` workflow is routed behind, asked here so the button is absent
@@ -631,6 +646,27 @@ Item {
         ctrl.setCustomer(0)
     }
 
+    /* The form, not the picker: the button beside the field is the whole route,
+       so an operator who has decided to add a customer is never handed a table
+       of the ones that already exist to click through. The flag is what brings
+       the result back — see customerWritten. */
+    function newCustomer() {
+        awaitingNewCustomer = true
+        requestOpen("customer_edit", {})
+    }
+
+    /* Created and attached in one step: the operator pressed that button to put
+       a name on this sale, not to file a record. `saved` is the form's path (a
+       new customer is a save with no id) and `created` the older quick-add one;
+       both are funnelled here by the Connections below, which is exactly how
+       the picker dialog did it when this flow was routed through it. */
+    function customerWritten(customer) {
+        if (!awaitingNewCustomer || !customer)
+            return
+        awaitingNewCustomer = false
+        attachCustomer(customer)
+    }
+
     // =====================================================================
     // PAYMENT
     // =====================================================================
@@ -648,6 +684,18 @@ Item {
         if (!allowPartial) {
             notify(Strings.t("pay.partial.off",
                              "Partial payment is switched off in settings."),
+                   Severity.caution)
+            return
+        }
+        /* An underpayment is an account balance, whatever it is called, so a
+           shop with accounts off has no use for this sheet — except to correct
+           what an old invoice was recorded as paid, which is reconciliation
+           and not a new debt. Python owns the refusal; this only keeps the
+           button from opening a sheet whose every answer but "the whole
+           total" is going to be one. */
+        if (!allowDebt && editing === 0) {
+            notify(Strings.t("pay.debt_off",
+                             "Sales on account are switched off in Settings."),
                    Severity.caution)
             return
         }
@@ -689,6 +737,11 @@ Item {
        indistinguishable from a broken one. ProductsPage's requestOpen, verbatim,
        because the reasoning is the same. */
     function requestOpen(key, context) {
+        /* A different dialog opening from this page means the add-customer flow
+           is over — cancelled, or superseded — so a customer saved by whatever
+           opens next must not land on the sale as if it were that one. */
+        if (key !== "customer_edit")
+            awaitingNewCustomer = false
         if (workflows && workflows.open) {
             workflows.open(key, context || ({}))
             return
@@ -781,6 +834,17 @@ Item {
         }
     }
 
+    /* The accounts controller, for the add button's result: the form is a
+       DialogHost object this page never sees, but its save is announced here.
+       Gated by awaitingNewCustomer, for the reason on that property. */
+    Connections {
+        target: root.customers
+        ignoreUnknownSignals: true
+
+        function onSaved(customer) { root.customerWritten(customer) }
+        function onCreated(customer) { root.customerWritten(customer) }
+    }
+
     /* pos's 300ms. Reads the field when it fires rather than carrying the text,
        so a burst of keystrokes collapses to one query for the final text. */
     Timer {
@@ -805,7 +869,7 @@ Item {
     Shortcut { sequence: "F6"; onActivated: root.command("carts") }
     Shortcut {
         sequence: "F8"
-        enabled: root.allowPartial
+        enabled: root.allowPartial && (root.allowDebt || root.editing > 0)
         onActivated: root.startPartial()
     }
     Shortcut { sequence: "F9"; onActivated: root.payCash() }
@@ -1120,13 +1184,30 @@ Item {
              * dock names the invoice and offers the way out; the pay hero below turns
              * indigo and reads "Save changes". Two signals, one colour, and no change
              * to where anything is or how it is operated.
+             *
+             * WHY EVERYTHING ON THE BAR INKS NAVY, NOT WHITE
+             *
+             * The fill is `chromeHue.indigo` — the LIGHT periwinkle from the
+             * chrome-hue block, the same hue the filled pay hero below uses.
+             * `onChrome`'s near-white was written for the dock's navy and is
+             * about 1.6:1 on this fill: the bar said "editing" loudly and its
+             * words not at all. The hero already solved the pairing — "the dock's
+             * own navy clears 4.5:1 against every hue in Tokens.chromeHue by
+             * construction" (PayButton) — so the bar takes the same ink, and the
+             * caption quiets it with opacity rather than with a lighter colour,
+             * which is the hero's own trick for its shortcut line.
              */
             Rectangle {
+                id: editBar
+
                 Layout.fillWidth: true
                 visible: root.editing > 0
                 implicitHeight: editRow.implicitHeight + Tokens.spacing.md
                 radius: Tokens.radius.md
                 color: Tokens.chromeHue.indigo
+
+                /* The one ink the whole bar shares — see the header above. */
+                readonly property color ink: Tokens.chromeTo
 
                 RowLayout {
                     id: editRow
@@ -1140,7 +1221,7 @@ Item {
                     Icon {
                         icon: "ic_fluent_edit_20_regular"
                         size: Tokens.icon.md
-                        color: Tokens.onChrome
+                        color: editBar.ink
                     }
 
                     ColumnLayout {
@@ -1152,7 +1233,8 @@ Item {
                             font.family: Tokens.font.family
                             font.pixelSize: Tokens.font.caption
                             font.weight: Font.DemiBold
-                            color: Tokens.onChromeMuted
+                            color: editBar.ink
+                            opacity: 0.75
                         }
 
                         Text {
@@ -1160,7 +1242,7 @@ Item {
                             font.family: Tokens.font.family
                             font.pixelSize: Tokens.font.bodyLarge
                             font.weight: Font.DemiBold
-                            color: Tokens.onChrome
+                            color: editBar.ink
                         }
                     }
 
@@ -1168,9 +1250,22 @@ Item {
                        opened the wrong invoice looks for the exit where the warning
                        is, not in a menu. `iconName`, not `glyph` — ChromeButton is
                        the window-chrome button and names its icon differently from
-                       the page-level GlyphButton. */
+                       the page-level GlyphButton.
+
+                       Its fills are overridden as a set: the defaults are the dark
+                       chrome's, and a navy hover square with a white glyph on a
+                       light indigo bar is the same contrast fault this bar is being
+                       cured of, one state over. Translucent navy reads on the hue
+                       the way the outlined pay hero's translucent states do. */
                     ChromeButton {
                         iconName: "ic_fluent_dismiss_20_regular"
+                        iconColor: Qt.rgba(editBar.ink.r, editBar.ink.g,
+                                           editBar.ink.b, 0.8)
+                        iconColorActive: editBar.ink
+                        fillHover: Qt.rgba(editBar.ink.r, editBar.ink.g,
+                                           editBar.ink.b, 0.18)
+                        fillDown: Qt.rgba(editBar.ink.r, editBar.ink.g,
+                                          editBar.ink.b, 0.30)
                         tip: Strings.t("pos.edit.cancel",
                                        "Leave the invoice as it was")
                         onClicked: if (root.ctrl) root.ctrl.cancelEdit()
@@ -1188,28 +1283,52 @@ Item {
                 totalText: root.ctrl ? root.ctrl.totalText : "â€”"
                 currencyText: root.ctrl ? root.ctrl.currencyText : ""
 
-                actionItems: [
-                    /* Partial first, Cash last: the far edge is where a thumb
-                       lands and cash is the common case. pos orders them the same
-                       way. Hidden rather than disabled when the setting is off —
-                       pos's apply_sale_settings does exactly that, and a
-                       permanently dead hero on the dock is furniture.
+                /*
+                 * PAID AND REMAINING, ON AN INVOICE BEING REWRITTEN.
+                 *
+                 * The dock's settled column, in the same slot the delivery screen
+                 * puts it — between the total and the decision, at reading size —
+                 * because the question while correcting a customer's invoice is
+                 * the same one the delivery screen answers there: "how much is
+                 * still owed after this". The figures are live: the payment sheet
+                 * REPLACES the paid figure while one is being rewritten, and the
+                 * remaining column moves with it.
+                 *
+                 * ONLY WHEN THERE IS A CUSTOMER. A guest invoice cannot owe
+                 * anything — `payPartial` refuses without a customer, so a guest
+                 * sale is always paid in full — and "Paid (the total again) /
+                 * Remaining 0,00" on every guest edit is a fake reading rather
+                 * than an answer. A customer invoice's paid figure is a fact
+                 * about their account, and correcting it is exactly when it must
+                 * be in view.
+                 */
+                paidText: root.editing > 0 && root.hasCustomer && root.ctrl
+                          ? root.ctrl.paidText : ""
+                remainingText: root.editing > 0 && root.hasCustomer && root.ctrl
+                               ? root.ctrl.remainingText : ""
+                owing: root.editing > 0 && root.hasCustomer && root.ctrl
+                       && root.ctrl.total - root.ctrl.paid > 0.005
 
-                       And Partial is COMPACT. Two 180px heroes side by side took a
-                       third of the dock to shout two answers at the same volume,
-                       when the question has a default: cash. The exception keeps a
-                       real target and a label, gives back the width, and stops
-                       competing with the figure it is paying. */
-                    PayButton {
-                        visible: root.allowPartial
-                        compact: true
-                        text: Strings.t("pos.pay.partial", "Partial")
-                        shortcut: "F8"
-                        glyph: "ic_fluent_money_hand_20_regular"
-                        hue: Tokens.chromeHue.amber
-                        enabled: root.cartCount > 0
-                        onClicked: root.startPartial()
-                    },
+                actionItems: [
+                     PayButton {
+                         /* Partial first, Cash last: the far edge is where a thumb
+                            lands and cash is the common case. pos orders them the same
+                            way. Hidden rather than disabled when the setting is off —
+                            pos's apply_sale_settings does exactly that, and a
+                            permanently dead hero on the dock is furniture. Hidden for
+                            the same reason when accounts are off, except while an
+                            invoice is being corrected: rewriting what one was
+                            recorded as paid is reconciliation, not a new debt. */
+                         visible: root.allowPartial
+                                  && (root.allowDebt || root.editing > 0)
+                         compact: true
+                         text: Strings.t("pos.pay.partial", "Partial")
+                         shortcut: "F8"
+                         glyph: "ic_fluent_money_hand_20_regular"
+                         hue: Tokens.chromeHue.amber
+                         enabled: root.cartCount > 0
+                         onClicked: root.startPartial()
+                     },
                     PayButton {
                         /* The same button in both modes, saying which one it is in.
                            An invoice being corrected is committed by the same
@@ -1255,35 +1374,52 @@ Item {
                 anchors.margins: Tokens.size.cardPadding
                 spacing: Tokens.spacing.sm
 
-                PartySelect {
-                    id: customerSelect
+                /* Choosing somebody who is already in the book and adding
+                   somebody to it are two different questions, so the add button
+                   sits BESIDE the field. As a row inside the sheet it read as
+                   one more party to pick — and it was a detour too: it opened
+                   the picker's table, whose own footer opened the form this
+                   button opens directly.
 
+                   The button is 48px, the card's own height, so the row stays
+                   one line tall; the card keeps 440px of the 500px column,
+                   which is the width the sheet's rows are measured for. */
+                RowLayout {
                     Layout.fillWidth: true
-                    enabled: root.canPickCustomer
-                    active: root.hasCustomer
-                    title: root.hasCustomer && root.ctrl
-                           ? root.ctrl.customerName
-                           : Strings.t("pos.walk_in", "Walk-in customer")
-                    subtitle: root.hasCustomer && root.ctrl
-                              ? root.ctrl.customerPhone
-                              : Strings.t("pos.customer.hint",
-                                          "Tap to attach a customer")
-                    removeTip: Strings.t("pos.customer.remove", "Remove customer")
+                    spacing: Tokens.spacing.sm
 
-                    rows: root.customers ? root.customers.rows : []
-                    placeholder: Strings.t("select_customer.search.ph",
-                                           "Search name or phone")
+                    PartySelect {
+                        id: customerSelect
 
-                    /* The way out when the name is not in the list. It opens the
-                       picker dialog, which is where quick-add lives — the dropdown
-                       does not grow a second form of its own, and the dialog
-                       attaches the new customer itself. */
-                    newLabel: Strings.t("qcustomer.title", "Quick Add Customer")
+                        Layout.fillWidth: true
+                        enabled: root.canPickCustomer
+                        active: root.hasCustomer
+                        title: root.hasCustomer && root.ctrl
+                               ? root.ctrl.customerName
+                               : Strings.t("pos.walk_in", "Walk-in customer")
+                        subtitle: root.hasCustomer && root.ctrl
+                                  ? root.ctrl.customerPhone
+                                  : Strings.t("pos.customer.hint",
+                                              "Tap to attach a customer")
+                        removeTip: Strings.t("pos.customer.remove",
+                                             "Remove customer")
 
-                    onListRequested: root.loadCustomers()
-                    onPicked: (party) => root.attachCustomer(party)
-                    onRemoveRequested: root.removeCustomer()
-                    onNewRequested: root.requestOpen("customer_select", {})
+                        rows: root.customers ? root.customers.rows : []
+                        placeholder: Strings.t("select_customer.search.ph",
+                                               "Search name or phone")
+
+                        onListRequested: root.loadCustomers()
+                        onPicked: (party) => root.attachCustomer(party)
+                        onRemoveRequested: root.removeCustomer()
+                    }
+
+                    IconButton {
+                        glyph: "ic_fluent_person_add_20_regular"
+                        glyphSize: Tokens.icon.md
+                        tooltip: Strings.t("customers.add", "New customer")
+                        enabled: root.canAddCustomer
+                        onClicked: root.newCustomer()
+                    }
                 }
 
                 Item {
@@ -1817,7 +1953,10 @@ Item {
 
         heading: Strings.t("pos.partial.title", "Part payment")
         due: root.ctrl ? root.ctrl.total : 0
-        allowZero: true
+        /* Zero is a debt sale, and a shop with accounts off has no debt sales —
+           but an invoice being corrected may already have been recorded at
+           zero, and this sheet is how that is fixed. */
+        allowZero: root.allowDebt || root.editing > 0
         confirmText: Strings.t("action.confirm", "Confirm")
 
         /* Rewriting an invoice: what is entered becomes the invoice's total paid, so

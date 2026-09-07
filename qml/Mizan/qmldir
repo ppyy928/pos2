@@ -50,6 +50,22 @@ SectionBar 1.0 SectionBar.qml
 # ledger needed the same one — so it lives here rather than three times.
 ProductFinder 1.0 ProductFinder.qml
 
+# The select-product table: every fact a picker row carries, under a heading per
+# column, filtered as the operator types. One body, three shells — the till's
+# product_select dialog, this popup for every screen that asks from inside a
+# dialog, and nothing else, so "which product" is answered the same way at the
+# till, over a delivery, over a stocktake, over a ledger and inside the
+# multi-unit form.
+ProductPicker 1.0 ProductPicker.qml
+ProductPickerPopup 1.0 ProductPickerPopup.qml
+
+# The select-product surface: one table — name, barcode, category, stock, price —
+# behind every place a product is chosen from. ProductPicker is the table itself,
+# for a caller that owns the frame; ProductPickerPopup is that table in a popup,
+# for a caller that only has a screen. See each file's header for the split.
+ProductPicker 1.0 ProductPicker.qml
+ProductPickerPopup 1.0 ProductPickerPopup.qml
+
 # One delivery line entered whole — quantity, cost, selling price — with the keypad
 # typing straight into whichever figure has focus. A popup rather than a workflow
 # dialog, because it opens from inside one.

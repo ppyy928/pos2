@@ -257,43 +257,57 @@ QtObject {
         // POS.
         /* cartRow carries an inline quantity stepper, which pos does not have:
            there, changing a quantity means selecting the line and retyping it on
-           the numpad, or opening a dialog. A 48px −/+ pair on the row itself is
-           the single biggest touch win available here, and it sets the floor:
+           the numpad, or opening a dialog. A 48px −/+ pair on the row itself is the
+           single biggest touch win available here, and it sets the floor:
            name line (23) + gap (2) + stepper (48) + padding (2×6) = 85.
 
            It was 120, which left 35px of air per row and fitted three lines in the
            cart's column — a sale of four items had to be scrolled to be read, which
            is the one list on this screen an operator checks against the goods in
-           front of them. 88 is the content plus a hair, and fits five. */
-        readonly property int cartRow:       88
+           front of them. 88 is the content plus a hair, and fits five.
+
+           Scaled with the text, for the tile's reason: the name line is type, and
+           a 21px name under a fixed 88 would push the stepper out of the card. */
+        readonly property int cartRow:      Math.round(88 * tokens.fontScale)
 
         /* Tile metrics are derived from their own content, not from a multiple
            of pos's 180×110 — that tile was sized around 12px type, and scaling
            the box by 1.5 while the type inside grows by 1.4 would just inherit
            its proportions by accident.
 
-               padding      14
-               name         52   two lines of font.tileName (18px → 26 each)
-               gap           6
-               price        34   one line of font.tilePrice (26px)
-               padding      14
-                          ----
-                          120
+                padding      14
+                name         52   two lines of font.tileName (18px → 26 each)
+                gap           6
+                price        34   one line of font.tilePrice (26px)
+                padding      14
+                           ----
+                           120
 
-           tileMin is a floor, not a fixed width, and `tileColumns` is the count the
-           wall aims for: the grid takes the smaller of the two, so a narrow window
-           drops to three or two and a wide one stays at four with the surplus spread
-           between the tiles rather than baked into them.
+            tileMin is a floor, not a fixed width, and `tileColumns` is the count the
+            wall aims for: the grid takes the smaller of the two, so a narrow window
+            drops to three or two and a wide one stays at four with the surplus spread
+            between the tiles rather than baked into them.
 
-           168 rather than the 200 this started at. 200 put three tiles across the
-           till's product zone and left the fourth column's worth of space spread as
-           padding inside them — a wall of big cards with fewer products on it, which
-           is the opposite of what a tile wall is for. At 168 a name still gets two
-           lines at 18px (about 15 characters a line, which covers "Coca-Cola 1.5L"
-           and elides the pack size — the tooltip carries the untruncated name). */
-        readonly property int tile:         120   // product tile total height
-        readonly property int tileName:      52   // two lines of tile name
-        readonly property int tileMin:      168   // narrowest a tile may flow to
+            168 rather than the 200 this started at. 200 put three tiles across the
+            till's product zone and left the fourth column's worth of space spread as
+            padding inside them — a wall of big cards with fewer products on it, which
+            is the opposite of what a tile wall is for. At 168 a name still gets two
+            lines at 18px (about 15 characters a line, which covers "Coca-Cola 1.5L"
+            and elides the pack size — the tooltip carries the untruncated name).
+
+            THE TEXT ZONES SCALE WITH THE TEXT SIZE. The tile is a container for
+            type, not a touch target: at `ui.font_scale` large the name needs 59px
+            for its two lines and the price needs a wider card to stay on one line,
+            and a fixed 52px/168px would clip both — the number on the card is the
+            thing this whole wall exists to show. So tile, tileName, tileMin,
+            tileMax and the photo band all grow with `fontScale`, which is what
+            keeps a card at ANY text size looking exactly like a card: the same
+            two-line name, the same one-line price, nothing elided that was not
+            elided at normal. The paddings are the one thing held constant — they
+            are the frame around the type, not the type. */
+        readonly property int tile:         Math.round(120 * tokens.fontScale)
+        readonly property int tileName:     Math.round(52 * tokens.fontScale)
+        readonly property int tileMin:      Math.round(168 * tokens.fontScale)
 
         /*
          * The wall's column count, and the widest a tile draws.
@@ -315,9 +329,12 @@ QtObject {
          * 192 is what a tile is at the normal layout — the zone at 795px, four
          * columns, one gap out of each cell — so the cap does nothing until the rail
          * is collapsed and then holds the tiles exactly where they were.
+         *
+         * Scaled with the text, for tileMin's reason: the cap is the widest a
+         * card draws, and a card at a larger text size is a wider card.
          */
         readonly property int tileColumns:    4
-        readonly property int tileMax:      192
+        readonly property int tileMax:      Math.round(192 * tokens.fontScale)
 
         /* The photo card — the same tile with a picture above it.
          *
@@ -340,13 +357,16 @@ QtObject {
          * 1080p screen at three rows. It is also the honest size for a shop that has
          * photographed part of its catalogue — the band a product without a photo
          * shows is empty, and 84 wastes a third less of the card than 112 did while
-         * still reading as a picture frame at about 2:1. */
-        readonly property int tileImage:     84   // the photo band
+         * still reading as a picture frame at about 2:1.
+         *
+         * Scaled with the text, like everything else about the card's shape: the
+         * band keeps its ~2:1 against a tileMediaMin that grows. */
+        readonly property int tileImage:     Math.round(84 * tokens.fontScale)
         readonly property int tileMedia:    tile + tileImage + 12
         /* A photo needs more width than a name does before it reads as a photo
            rather than a stripe. 176 keeps the band at about 2:1 and takes four
            across the till's product zone, same as the compact card. */
-        readonly property int tileMediaMin: 176
+        readonly property int tileMediaMin: Math.round(176 * tokens.fontScale)
 
         /* The form's own thumbnail. Square, because that is the shape of the
            question "which picture is this?" and it sits beside a column of
@@ -417,23 +437,42 @@ QtObject {
     // =====================================================================
     // TYPE — POS-specific sizes on top of the scaled Fluent type ramp
     // =====================================================================
+    /* The text-size setting, as a factor of normal. Every size in the `font`
+       block below is multiplied by it, which is the whole implementation of
+       `ui.font_scale`: there is no second type ramp to switch to, only one
+       ramp drawn larger, and a Text that asks for body gets 17, 19 or 21
+       depending on what the shop chose.
+
+       Read off the settings controller rather than a context property so the
+       switch is live — the controller re-notifies on the write, this binding
+       re-runs, and every bound `font.pixelSize` in the app follows. Guarded,
+       because tokens exist in builds without the bridge (qml_check, a bare
+       preview) and must stand alone there.
+
+       Geometry does NOT scale with it: the control heights and row metrics
+       above are touch targets, chosen for a finger, and pos's own large sizes
+       grew type inside fixed widget rows too. */
+    readonly property real fontScale: (typeof app !== "undefined" && app
+                                       && app.settings)
+                                      ? app.settings.fontScale : 1.0
+
     readonly property QtObject font: QtObject {
         readonly property string family: Fluent.typography.fontFamily
 
         // Straight through from the scaled Fluent ramp, aliased so pages never
         // reach into two token objects for type.
-        readonly property int caption:   Fluent.typography.caption      // 15
-        readonly property int body:      Fluent.typography.body         // 17
-        readonly property int bodyLarge: Fluent.typography.bodyLarge    // 21
-        readonly property int subtitle:  Fluent.typography.subtitle     // 24
-        readonly property int title:     Fluent.typography.title        // 32
+        readonly property int caption:   Math.round(Fluent.typography.caption * tokens.fontScale)      // 15
+        readonly property int body:      Math.round(Fluent.typography.body * tokens.fontScale)         // 17
+        readonly property int bodyLarge: Math.round(Fluent.typography.bodyLarge * tokens.fontScale)    // 21
+        readonly property int subtitle:  Math.round(Fluent.typography.subtitle * tokens.fontScale)     // 24
+        readonly property int title:     Math.round(Fluent.typography.title * tokens.fontScale)        // 32
 
         // POS-only. The total is read from a metre away, standing up.
-        readonly property int overline:   13   // table headers, KPI labels (caps)
-        readonly property int tileName:   18
-        readonly property int tilePrice:  26
-        readonly property int amount:     34   // cart line totals, KPI values
-        readonly property int posTotal:   64
+        readonly property int overline:   Math.round(13 * tokens.fontScale)  // table headers, KPI labels (caps)
+        readonly property int tileName:   Math.round(18 * tokens.fontScale)
+        readonly property int tilePrice:  Math.round(26 * tokens.fontScale)
+        readonly property int amount:     Math.round(34 * tokens.fontScale)  // cart line totals, KPI values
+        readonly property int posTotal:   Math.round(64 * tokens.fontScale)
     }
 
     readonly property QtObject spacing: QtObject {

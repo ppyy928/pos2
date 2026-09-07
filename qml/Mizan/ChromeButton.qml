@@ -17,6 +17,17 @@ T.AbstractButton {
     property int iconSize: Tokens.icon.md
     property color iconColor: Tokens.onChromeMuted
     property color iconColorActive: Tokens.onChrome
+
+    /* The state fills, overridable as a set. The defaults are the dark chrome
+       this button was built for; a caller seating it on a DIFFERENT fixed
+       surface — the till's indigo edit bar — supplies its own trio, because
+       navy hover squares on a light hue are chrome furniture in the wrong room.
+       Ink and fill travel separately: the ink says what the button is on, the
+       fill says what sits under it. */
+    property color fillRest: "transparent"
+    property color fillHover: Tokens.chromeHover
+    property color fillDown: Tokens.chromeActive
+
     property string tip: ""
 
     implicitWidth: Tokens.size.control
@@ -30,9 +41,9 @@ T.AbstractButton {
 
     background: Rectangle {
         radius: Tokens.radius.sm
-        color: control.down    ? Tokens.chromeActive
-             : control.hovered ? Tokens.chromeHover
-             : "transparent"
+        color: control.down    ? control.fillDown
+             : control.hovered ? control.fillHover
+             : control.fillRest
 
         Behavior on color { ColorAnimation { duration: Fluent.anim.appearance } }
 

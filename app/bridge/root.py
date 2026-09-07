@@ -47,6 +47,7 @@ from .diag import Diag
 from .drafts import Drafts
 from .employees import Employees
 from .i18n import I18n
+from .idlelock import IdleLock
 from .printing import Printing
 from .products import Products
 from .purchases import Purchases, Suppliers
@@ -107,7 +108,12 @@ class App(QObject):
         # A sale puts money in the drawer, and a payment settles a debt the
         # customers page is showing.
         self._pos.saleFinished.connect(lambda _number: self._cash.load())
+        # Either kind of payment register write moves a balance a page is
+        # showing: a customer's debt on the customers page, a supplier's on the
+        # suppliers page. Both controllers already reload the record dialog
+        # that asked for the write; this is the list behind it.
         self._payments.invalidated.connect(self._customers.reload)
+        self._payments.invalidated.connect(self._suppliers.reload)
         # A delivery raises stock, so the till's grid is stale; paying a
         # supplier changes what the purchases page reports as owed.
         self._purchases.invalidated.connect(self._pos.invalidated)
@@ -169,6 +175,19 @@ class App(QObject):
         # object that sees every key, and nothing outside this file should have to
         # know that one of these controllers is watching it.
         self._scanner.install(QCoreApplication.instance())
+
+        # The idle lock watches the same application the scanner does, for the
+        # same reason — and it locks through the session, so the shell's
+        # reaction to a lock is the reaction it already has to signing out.
+        # Kept as an attribute, not a context property: it is wiring, not a
+        # surface, and QML has no reason to reach it.
+        self._idle_lock = IdleLock(self._session, self)
+        self._idle_lock.install(QCoreApplication.instance())
+
+        # The stored text size, applied to the application font before any
+        # control is created — the same moment run.py sets the base size, so a
+        # shop that chose large has never seen a frame of normal.
+        self._settings.apply_base_font()
 
         self._wire_diagnostics()
 

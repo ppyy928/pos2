@@ -17,9 +17,6 @@ import Mizan
  *   │   Amine Bekkar                    4 500,00 │   the items, filtered
  *   │   0661 20 41 88                            │
  *   │   Bekkar Frères                            │
- *   │ ┌────────────────────────────────────────┐ │
- *   │ │ ＋ Quick Add Customer                  │ │   optional, caller's action
- *   │ └────────────────────────────────────────┘ │
  *   └────────────────────────────────────────────┘
  *
  * WHY A DROPDOWN AND NOT THE DIALOG IT REPLACES
@@ -32,10 +29,12 @@ import Mizan
  * total stay on screen and stay readable while the list is down — and it is the
  * control the rest of the world uses for "one of these, and I know its name".
  *
- * The dialog is still the right shape when picking a customer IS the task, which
- * is why CustomerPickerDialog stays: SaleSelectorDialog filters by customer with
- * it, and the till reaches it through `newRequested` when the name being searched
- * for turns out not to exist yet.
+ * The dialog is still the right shape when picking a customer IS the task —
+ * CustomerPickerDialog stays registered for that route, with its own table, its
+ * debt column and its new-customer form. Adding somebody who is not in the list is
+ * not that task, and it is not a row in this sheet either — a row under the list
+ * reads as one more party to choose. On the till it is a button beside this field,
+ * which opens the form directly; the sheet stays a list and nothing else.
  *
  * WHY THE SEARCH BOX IS INSIDE THE SHEET AND NOT THE FIELD
  *
@@ -88,11 +87,6 @@ Item {
     /* Leave the filtering to the caller. See WHO FILTERS above. */
     property bool remote: false
 
-    /* An action under the list, for when the name searched for is not there yet.
-       Hidden while the label is empty, which is how a caller opts out. */
-    property string newLabel: ""
-    property string newGlyph: "ic_fluent_person_add_20_regular"
-
     // =====================================================================
     // SIGNALS
     // =====================================================================
@@ -105,7 +99,6 @@ Item {
     signal listRequested()
     /* The query changed. Only a `remote` caller has to answer it. */
     signal queried(string text)
-    signal newRequested()
 
     readonly property bool expanded: sheet.visible
 
@@ -268,14 +261,11 @@ Item {
             Math.min(select.visibleRows, Math.max(1, shown.length))
             * Tokens.size.tableRow
 
-        readonly property int footHeight:
-            select.newLabel !== "" ? Tokens.size.control + Tokens.spacing.xs : 0
-
         /* Measured off the paddings that are in force rather than the ones asked
            for, so the arithmetic survives a style that has its own opinion. */
         implicitHeight: topPadding + bottomPadding
                         + Tokens.size.control + Tokens.spacing.xs
-                        + listHeight + footHeight
+                        + listHeight
 
         background: Rectangle {
             color: Fluent.popupBackground
@@ -436,22 +426,6 @@ Item {
                     font.family: Tokens.font.family
                     font.pixelSize: Tokens.font.body
                     color: Fluent.textTertiary
-                }
-            }
-
-            /* Closed before the signal, not after: what this opens is a dialog, and
-               a dropdown left hanging under it is a dropdown the operator has to
-               dismiss on the way back. */
-            GlyphButton {
-                Layout.fillWidth: true
-                Layout.preferredHeight: Tokens.size.control
-                visible: select.newLabel !== ""
-                glyph: select.newGlyph
-                text: select.newLabel
-                outlined: true
-                onClicked: {
-                    select.close()
-                    select.newRequested()
                 }
             }
         }

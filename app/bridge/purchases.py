@@ -493,6 +493,10 @@ class Suppliers(QObject):
             paid_total += amount
             payments.append({
                 "id": payment.get("id"),
+                # Raw alongside the formatted figure: the record's payment
+                # panel corrects one in place, and the arithmetic — "the
+                # balance moves by the difference" — needs the number.
+                "amount": amount,
                 "amount_text": fmt.money(amount),
                 "when": fmt.when(payment.get("created_at")),
             })

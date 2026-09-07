@@ -28,7 +28,9 @@ import Mizan
  * A role is a starting point — pos's ROLE_DEFAULTS — and the boxes stay editable
  * underneath it, because a real shop always has the cashier who is also allowed to
  * receive deliveries. Choosing a role replaces the selection, so the order is:
- * role first, then adjust.
+ * role first, then adjust. A NEW account opens already filled from the default
+ * role ("seller"), because a form whose role and whose checkboxes disagree about
+ * the same state is a form that has not finished opening.
  *
  * THE PASSWORD FIELD IS EMPTY ON AN EDIT AND MEANS "LEAVE IT ALONE"
  *
@@ -63,8 +65,20 @@ AppDialog {
         name.text = row.name !== undefined ? row.name : ""
         username.text = row.username !== undefined ? row.username : ""
         active.checked = row.active !== false
-        granted = row.permissions !== undefined ? row.permissions.slice() : []
         role.currentIndex = indexOfRole(row.role !== undefined ? row.role : "seller")
+        if (creating) {
+            /* A new account starts from its role, not from nothing. The combo
+               already says "Seller" — set above — but `applyRole` only runs
+               `onActivated`, on a human change. Without this, the form opened
+               showing the seller role with every permission unticked, and the
+               defaults only appeared once the operator cycled the combo away
+               and back: the role and the boxes disagreed about the same state.
+               An edit keeps the employee's own grants, which may have been
+               adjusted away from the role's defaults and are the truth. */
+            applyRole(role.currentIndex)
+        } else {
+            granted = row.permissions !== undefined ? row.permissions.slice() : []
+        }
         name.forceActiveFocus()
     }
 

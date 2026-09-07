@@ -181,6 +181,91 @@ EXTRA: dict[str, dict[str, str]] = {
         "fr": "Demander avant de vendre plus que le stock",
         "ar": "السؤال قبل بيع أكثر من الموجود في المخزون",
     },
+    # WHAT A LABEL CARRIES. pos's settings screen hardcodes these three labels in
+    # its own widgets and its catalogue never named them, so both surfaces here —
+    # the Settings group and the label sheet's contents row — were falling back to
+    # English. One set of keys, two doors, one store.
+    "settings.barcode.show_store": {
+        "en": "Print the shop name",
+        "fr": "Imprimer le nom du magasin",
+        "ar": "طباعة اسم المتجر",
+    },
+    "settings.barcode.show_name": {
+        "en": "Print the product name",
+        "fr": "Imprimer le nom du produit",
+        "ar": "طباعة اسم المنتج",
+    },
+    "settings.barcode.show_price": {
+        "en": "Print the price",
+        "fr": "Imprimer le prix",
+        "ar": "طباعة السعر",
+    },
+    # The heading over those three switches on the label sheet, where the picture
+    # re-renders on every flip.
+    "barcode.contents": {
+        "en": "On the label",
+        "fr": "Sur l'étiquette",
+        "ar": "على الملصق",
+    },
+    # The label sheet's settings popup: the gear beside the picture, the heading
+    # inside it, and the size group it carries.
+    "barcode.settings": {
+        "en": "Label settings",
+        "fr": "Paramètres de l'étiquette",
+        "ar": "إعدادات الملصق",
+    },
+    "barcode.size": {
+        "en": "Label size",
+        "fr": "Dimensions",
+        "ar": "مقاس الملصق",
+    },
+    "barcode.width": {
+        "en": "Width",
+        "fr": "Largeur",
+        "ar": "العرض",
+    },
+    "barcode.height": {
+        "en": "Height",
+        "fr": "Hauteur",
+        "ar": "الارتفاع",
+    },
+    # The picture's heading on the label sheet — and, one row up, the tooltip on
+    # the + that puts a product on the sheet.
+    "barcode.preview": {
+        "en": "Preview",
+        "fr": "Aperçu",
+        "ar": "معاينة",
+    },
+    "barcode.enqueue": {
+        "en": "Queue one label",
+        "fr": "Mettre en file",
+        "ar": "أضف ملصقًا",
+    },
+    # An override, not a new key: the label sheet's catalogue gained an explicit
+    # + on each row, and "tap a product" now undersells the thing to tap. pos's
+    # own text serves its own screen, which has no +; EXTRA is merged over the
+    # borrowed table only in THIS front end, so its wording stays its own.
+    "barcode.pick": {
+        "en": "Tap + on a product to queue one label",
+        "fr": "Touchez + sur un produit pour ajouter une étiquette",
+        "ar": "انقر + على منتج لإضافة ملصق واحد",
+    },
+    # Same reason: the empty sheet used to point at a "Queue all" button this
+    # dialog no longer has — one press queuing an unbounded number of labels was
+    # a misfire with a printer attached.
+    "barcode.queue.empty": {
+        "en": "Nothing queued yet. Tap + on a product on the left.",
+        "fr": "Rien en file. Touchez + sur un produit à gauche.",
+        "ar": "لا شيء في القائمة بعد. انقر + على منتج في اليسار.",
+    },
+    # The refusal a till gives when the shop has switched accounts off — the same
+    # sentence from the button and from Python, because the button may be bypassed
+    # by F8.
+    "pay.debt_off": {
+        "en": "Sales on account are switched off in Settings.",
+        "fr": "Les ventes à crédit sont désactivées dans les paramètres.",
+        "ar": "البيع بالدين معطّل في الإعدادات.",
+    },
 }
 
 

@@ -7,17 +7,17 @@ import Mizan
 /*
  * Barcode labels — the sheet that turns a shelf into printed prices.
  *
- *   ┌ search ─────────────────┐ ┌ preview ──────────────┐
- *   │ Atlas Beans   288582…   │ │   DZ-Retail Store     │
- *   │ Atlas Rice    288582…   │ │   Atlas Beans         │
- *   │ Atlas Salt    (no code) │ │   671.91 DA           │
- *   │ …                       │ │   ▍▍▎▍▎▍▍▎ 2885822…   │
- *   └─────────────────────────┘ ├───────────────────────┤
- *                               │ queue                 │
- *                               │ Atlas Beans   [-]4[+] │
- *                               │ Atlas Rice    [-]1[+] │
- *                               │ 5 labels     [ Print ]│
- *                               └───────────────────────┘
+ *   ┌ search ────── [ category ]─┐ ┌ PREVIEW ────────── [⚙]┐
+ *   │ Atlas Beans   288582…  [+] │ │   DZ-Retail Store     │
+ *   │ Atlas Rice    288582…  [+] │ │   Atlas Beans         │
+ *   │ Atlas Salt    (no code) [+] │ │   671.91 DA           │
+ *   │ …                           │ │   ▍▍▎▍▎▍▍▎ 2885822…   │
+ *   └─────────────────────────────┘ ├───────────────────────┤
+ *                                   │ SHEET — 5      [🧹]   │
+ *                                   │ Atlas Beans   [-]4[+] │
+ *                                   │ Atlas Rice    [-]1[+] │
+ *                                   │ 5 labels     [ Print ]│
+ *                                   └───────────────────────┘
  *
  * WHY THIS SCREEN DID NOT EXIST
  *
@@ -34,6 +34,16 @@ import Mizan
  * queue with a count on every line — which is also the order the labels come off
  * the roll, so an operator can walk the shelf in the order they built it.
  *
+ * THE + ON THE ROW, AND WHY THE ROW ALSO HAS TO OPEN
+ *
+ * The explicit way onto the sheet is the + in the row's actions column — a picker
+ * whose whole purpose is "put this one on the sheet" owes its primary action a hit
+ * target of its own, and a double-click nobody can discover is not one. The row
+ * still opens on Enter and double-click, because a keyboard-only pass through the
+ * catalogue must not end at a dead row. There is no "queue all": a switch that
+ * puts an unbounded number of labels on a roll in one press is a misfire with a
+ * printer attached, and the operator who means it can hold the +.
+ *
  * WHY THE PREVIEW IS NOT OPTIONAL
  *
  * The failure this screen has is silent: a barcode that renders too dense for the
@@ -47,10 +57,21 @@ import Mizan
  *
  * `classic_side` puts the price rotated in a band down the right-hand edge;
  * `bottom_price` puts it large along the bottom. Both print the same elements, so
- * the choice is one of shape, and the picture above the picker is the whole
- * argument for either. It is a setting rather than a per-print option — a shop
- * prints one shape of shelf label — which is why the settings page shows the same
- * choice and the older front end prints the same sticker.
+ * the choice is one of shape, and the picture is the whole argument for either.
+ * It is a setting rather than a per-print option — a shop prints one shape of
+ * shelf label — which is why the settings page shows the same choice and the
+ * older front end prints the same sticker.
+ *
+ * THE SETTINGS LIVE BEHIND THE GEAR ABOVE THE PICTURE
+ *
+ * Design, roll size and what the label carries are not a row of controls under
+ * the picture — that row competed with the queue for the pane's height and read
+ * as part of the sheet rather than as settings. One gear in the picture's header
+ * row opens a small sheet with all three groups, written the moment they are
+ * changed into the same `barcode.*` keys the Settings page holds: one store,
+ * two doors, and the picture re-renders on every flip — the popup opens below
+ * the picture, over the queue, never over the picture itself, so the consequence
+ * of a switch is on screen while the switch still is.
  *
  * WHAT CANNOT BE LABELLED
  *
@@ -66,8 +87,13 @@ AppDialog {
     readonly property var ctrl: (typeof app !== "undefined" && app) ? app.printing : null
     readonly property var products: (typeof app !== "undefined" && app) ? app.products : null
 
-    preferredWidth: 1420
-    preferredHeight: 900
+    /* Nearly the window: this is a work surface, not a form — the catalogue
+       wants its rows and the queue wants depth, and every pixel of margin is a
+       row either list will not show. `breathing` comes down a notch with it
+       (AppDialog's default is two xxl) for the same reason. */
+    preferredWidth: 1560
+    preferredHeight: 960
+    breathing: 2 * Tokens.spacing.xl
 
     title: Strings.t("products.hdr.barcode", "Barcode labels")
 
@@ -180,29 +206,6 @@ AppDialog {
             ctrl.clearPreview()
     }
 
-    /* Everything the current filter matched, one label each — the "new price list
-       for this category" case, which is the one that makes this screen worth
-       opening at all. */
-    function enqueueAll() {
-        var next = queue.slice()
-        for (var i = 0; i < candidates.length; i++) {
-            var row = candidates[i]
-            if (!row.has_barcode)
-                continue
-            var at = -1
-            for (var j = 0; j < next.length; j++)
-                if (next[j].id === row.id) { at = j; break }
-            if (at < 0)
-                next.push({
-                    id: row.id, name: row.name, barcode: row.barcode,
-                    price: row.price, price_text: row.price_text, copies: 1
-                })
-        }
-        queue = next
-        if (next.length > 0 && shownId < 0)
-            show(next[0].id)
-    }
-
     // -- the picture -------------------------------------------------------
     function show(id) {
         shownId = id
@@ -215,6 +218,11 @@ AppDialog {
         }
         ctrl.previewLabel(queue[at])
     }
+
+    /* What the label carries, for the toggles below: a fresh JS object each
+       time the controller re-notifies, which is what makes every switch the
+       sheet writes re-render the switches themselves. */
+    readonly property var flags: ctrl ? ctrl.labelFlags : ({})
 
     // -- the shape it is printed in ----------------------------------------
     function formatIndex() {
@@ -232,6 +240,16 @@ AppDialog {
             return
         ctrl.setLabelFormat(formats[index])
         /* Re-render at once: the picture is the entire reason to choose. */
+        show(shownId)
+    }
+
+    /* One content switch, and the picture follows it — a switch whose effect
+       only showed on the next preview would be a switch nobody trusts. The
+       value is kept by the controller, in the store the Settings page reads. */
+    function toggleFlag(key, on) {
+        if (!ctrl)
+            return
+        ctrl.setLabelFlag(key, on)
         show(shownId)
     }
 
@@ -262,8 +280,286 @@ AppDialog {
     }
 
     // =====================================================================
+    // THE SETTINGS POPUP
+    // =====================================================================
+    /* Everything that shapes the picture, in one small sheet: the design,
+       the roll's size, and what is printed on it. Every change is written
+       the moment it is made — the same keys the Settings page holds, so this
+       is a second door into one store, never a second store — and the picture
+       re-renders on each one, which is the whole reason to change a label
+       here rather than in Settings.
+
+       MODAL, WITH AN INVISIBLE SCRIM. A non-modal popup in the overlay can
+       let a press near its edges — or after any future geometry change —
+       land on the queue's stepper buttons underneath it, which is exactly
+       the "I clicked the settings and a label count changed" this sheet
+       must never do. `modal: true` puts the overlay's input grab in force:
+       nothing behind the sheet is reachable while it is up. The scrim is
+       replaced with a plain Item so nothing is dimmed — the preview above
+       stays at full contrast, which is the whole reason to watch it while
+       flipping switches — and each popup owns its own scrim, so the dialog
+       underneath keeps its own dim. Clicking anywhere outside — the gear
+       again, the catalogue, the queue — closes the sheet and is consumed by
+       the scrim, so the queue can only be acted on once the sheet is gone.
+
+       Positioned under the picture, never over it: what a switch changes is
+       on screen while the switch is. */
+    QC.Popup {
+        id: labelSheet
+
+        parent: frame
+        /* Right edges aligned, dropping out of the gear's end of the row above
+           the frame. */
+        x: frame.width - width
+        y: frame.height + Tokens.spacing.xs
+        width: 400
+        padding: Tokens.spacing.md
+        modal: true
+        /* A scrim that dims nothing. `Overlay.modal` is per popup: this one
+           grabs input without painting over the preview, and the dialog below
+           keeps its own. */
+        QC.Overlay.modal: Item { }
+        focus: true
+        closePolicy: QC.Popup.CloseOnEscape | QC.Popup.CloseOnPressOutside
+
+        background: Rectangle {
+            color: Fluent.popupBackground
+            radius: Tokens.radius.md
+            border.width: 1
+            border.color: Fluent.dividerBorder
+        }
+
+        onOpened: dialog.syncLabelSettings()
+
+        contentItem: ColumnLayout {
+            spacing: Tokens.spacing.md
+
+            Text {
+                Layout.fillWidth: true
+                text: Strings.t("barcode.settings", "Label settings")
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.subtitle
+                font.weight: Font.DemiBold
+                color: Fluent.textPrimary
+            }
+
+            // -- the design
+            Text {
+                text: Strings.t("barcode.format", "Label design")
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.overline
+                font.weight: Font.DemiBold
+                font.capitalization: Font.AllUppercase
+                font.letterSpacing: 1.1
+                color: Fluent.textTertiary
+            }
+
+            Segmented {
+                id: design
+
+                Layout.fillWidth: true
+                items: dialog.formatLabels
+
+                /* Segmented assigns its own currentIndex from a MouseArea,
+                    which would destroy a binding placed on it — the same trap
+                    LoginPage's language picker documents. So the link to the
+                    setting runs imperatively both ways; assigning an unchanged
+                    value emits nothing, so it converges. */
+                onCurrentIndexChanged: dialog.chooseFormat(currentIndex)
+            }
+
+            // -- the roll
+            Text {
+                text: Strings.t("barcode.size", "Label size")
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.overline
+                font.weight: Font.DemiBold
+                font.capitalization: Font.AllUppercase
+                font.letterSpacing: 1.1
+                color: Fluent.textTertiary
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Tokens.spacing.lg
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+
+                    Text {
+                        text: Strings.t("barcode.width", "Width")
+                        font.family: Tokens.font.family
+                        font.pixelSize: Tokens.font.caption
+                        color: Fluent.textSecondary
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Tokens.spacing.xs
+
+                        NumberField {
+                            id: rollWidth
+
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: Tokens.size.controlSmall
+                            font.pixelSize: Tokens.font.body
+
+                            /* Written on commit, and only when it moved: a
+                               focus loss is not a decision, and re-writing the
+                               same millimetres is a line in the log that says
+                               nothing happened. Clamped by the controller, and
+                               the field re-reads after the write so a value
+                               that was pulled into range says so. */
+                            onEditingFinished: {
+                                if (!dialog.ctrl || blank)
+                                    return
+                                if (Math.abs(value - dialog.ctrl.labelWidth) < 0.05)
+                                    return
+                                dialog.ctrl.setLabelWidth(value)
+                                text = String(dialog.ctrl.labelWidth)
+                                dialog.show(dialog.shownId)
+                            }
+                        }
+
+                        Text {
+                            text: "mm"
+                            font.family: Tokens.font.family
+                            font.pixelSize: Tokens.font.caption
+                            color: Fluent.textTertiary
+                        }
+                    }
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+
+                    Text {
+                        text: Strings.t("barcode.height", "Height")
+                        font.family: Tokens.font.family
+                        font.pixelSize: Tokens.font.caption
+                        color: Fluent.textSecondary
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Tokens.spacing.xs
+
+                        NumberField {
+                            id: rollHeight
+
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: Tokens.size.controlSmall
+                            font.pixelSize: Tokens.font.body
+
+                            onEditingFinished: {
+                                if (!dialog.ctrl || blank)
+                                    return
+                                if (Math.abs(value - dialog.ctrl.labelHeight) < 0.05)
+                                    return
+                                dialog.ctrl.setLabelHeight(value)
+                                text = String(dialog.ctrl.labelHeight)
+                                dialog.show(dialog.shownId)
+                            }
+                        }
+
+                        Text {
+                            text: "mm"
+                            font.family: Tokens.font.family
+                            font.pixelSize: Tokens.font.caption
+                            color: Fluent.textTertiary
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 1
+                color: Fluent.dividerBorder
+            }
+
+            // -- what the label carries
+            Text {
+                text: Strings.t("barcode.contents", "On the label")
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.overline
+                font.weight: Font.DemiBold
+                font.capitalization: Font.AllUppercase
+                font.letterSpacing: 1.1
+                color: Fluent.textTertiary
+            }
+
+            Repeater {
+                model: [
+                    { key: "show_store", label: Strings.t("settings.barcode.show_store",
+                                                          "Print the shop name") },
+                    { key: "show_name",  label: Strings.t("settings.barcode.show_name",
+                                                          "Print the product name") },
+                    { key: "show_price", label: Strings.t("settings.barcode.show_price",
+                                                          "Print the price") }
+                ]
+
+                RowLayout {
+                    required property var modelData
+                    Layout.fillWidth: true
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: modelData.label
+                        font.family: Tokens.font.family
+                        font.pixelSize: Tokens.font.body
+                        color: Fluent.textPrimary
+                        elide: Text.ElideRight
+                    }
+
+                    QC.Switch {
+                        checked: dialog.flags
+                                 && dialog.flags[modelData.key] === true
+                        onToggled: dialog.toggleFlag(modelData.key, checked)
+                    }
+                }
+            }
+        }
+    }
+
+    /* The popup's fields are set, not bound — typing in one breaks a binding,
+       and the next open would show the first keystroke's ghost. Re-read from
+       the store on every open instead, which is also what makes a change made
+       in Settings show up here without this file knowing that screen exists. */
+    function syncLabelSettings() {
+        if (!ctrl)
+            return
+        design.currentIndex = formatIndex()
+        rollWidth.text = String(ctrl.labelWidth)
+        rollHeight.text = String(ctrl.labelHeight)
+    }
+
+    // =====================================================================
     // COLUMNS
     // =====================================================================
+    /* The trailing + is the explicit way onto the sheet. The row still
+       double-clicks (rowActivated below), but a picker whose whole purpose is
+       "put this one on the sheet" owes its primary action a hit target of its
+       own — the same conclusion every actions column in the app reached.
+
+       One action per row, and it carries its own label because RowActions
+       would otherwise look up "action.add" — "Add", which is true of nearly
+       every button in the app and says nothing about this one. */
+    readonly property var rowAction: [
+        {
+            id: "add",
+            glyph: "ic_fluent_add_circle_20_regular",
+            tone: "primary",
+            label: Strings.t("barcode.enqueue", "Queue one label"),
+            /* Dimmed, not hidden, for the products with no code: the row is
+               listed and says why, and a + that vanished would leave the
+               row's shape different for a reason nothing on it explains. */
+            enabled: function (row) { return row && row.has_barcode }
+        }
+    ]
+
     readonly property var candidateColumns: [
         {
             key: "name",
@@ -287,6 +583,10 @@ AppDialog {
             numeric: true,
             width: 160,
             ltr: true
+        },
+        {
+            key: "actions",
+            actions: rowAction
         }
     ]
 
@@ -295,48 +595,6 @@ AppDialog {
     // =====================================================================
     contentItem: ColumnLayout {
         spacing: Tokens.spacing.md
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Tokens.spacing.md
-
-            FilterBar {
-                id: filter
-                Layout.fillWidth: true
-                placeholder: Strings.t("products.search.ph",
-                                       "Search by name or barcode")
-                onSearchTextChanged: debounce.restart()
-            }
-
-            QC.ComboBox {
-                Layout.preferredWidth: 260
-                Layout.preferredHeight: Tokens.size.control
-                textRole: "name"
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
-                model: {
-                    var out = [{ id: 0,
-                                 name: Strings.t("products.filter.all_categories",
-                                                 "All categories") }]
-                    var src = dialog.products ? dialog.products.categories : null
-                    if (src)
-                        for (var i = 0; i < src.length; i++)
-                            out.push(src[i])
-                    return out
-                }
-                onActivated: (index) => {
-                    dialog.categoryId = model[index].id
-                    dialog.reload()
-                }
-            }
-
-            GlyphButton {
-                glyph: "ic_fluent_add_square_multiple_20_regular"
-                text: Strings.t("barcode.add_all", "Queue all")
-                enabled: dialog.candidates.length > 0
-                onClicked: dialog.enqueueAll()
-            }
-        }
 
         Timer {
             id: debounce
@@ -353,16 +611,57 @@ AppDialog {
             spacing: Tokens.spacing.md
 
             // -----------------------------------------------------------------
-            // THE CATALOGUE
+            // THE CATALOGUE — its own filters, directly above its own table
             // -----------------------------------------------------------------
+            /* Search and category live in this column, not across the top of
+               the dialog: the left pane is one self-contained surface — find,
+               narrow, queue — and the row of controls that narrow the table
+               belongs to the table. The right pane starts at the top of the
+               split, which buys the picture the height the search row used to
+               take off it. */
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 spacing: Tokens.spacing.xs
 
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Tokens.spacing.md
+
+                    FilterBar {
+                        id: filter
+                        Layout.fillWidth: true
+                        placeholder: Strings.t("products.search.ph",
+                                               "Search by name or barcode")
+                        onSearchTextChanged: debounce.restart()
+                    }
+
+                    QC.ComboBox {
+                        Layout.preferredWidth: 260
+                        Layout.preferredHeight: Tokens.size.control
+                        textRole: "name"
+                        font.family: Tokens.font.family
+                        font.pixelSize: Tokens.font.body
+                        model: {
+                            var out = [{ id: 0,
+                                         name: Strings.t("products.filter.all_categories",
+                                                         "All categories") }]
+                            var src = dialog.products ? dialog.products.categories : null
+                            if (src)
+                                for (var i = 0; i < src.length; i++)
+                                    out.push(src[i])
+                            return out
+                        }
+                        onActivated: (index) => {
+                            dialog.categoryId = model[index].id
+                            dialog.reload()
+                        }
+                    }
+                }
+
                 Text {
                     text: Strings.t("barcode.pick",
-                                    "Tap a product to queue one label")
+                                    "Tap + on a product to queue one label")
                     font.family: Tokens.font.family
                     font.pixelSize: Tokens.font.caption
                     color: Fluent.textTertiary
@@ -375,6 +674,15 @@ AppDialog {
                     model: dialog.candidates
                     emptyIcon: "ic_fluent_barcode_scanner_20_regular"
                     emptyText: Strings.t("state.no_results.title", "No matches")
+
+                    /* The + on the row. Double-click and Enter still work —
+                       rowActivated is the keyboard's way in. */
+                    onActionTriggered: (row, action) => {
+                        if (action !== "add")
+                            return
+                        if (row >= 0 && row < dialog.candidates.length)
+                            dialog.enqueue(dialog.candidates[row])
+                    }
                     onRowActivated: (row) => {
                         if (row >= 0 && row < dialog.candidates.length)
                             dialog.enqueue(dialog.candidates[row])
@@ -386,15 +694,50 @@ AppDialog {
             // THE PICTURE AND THE SHEET
             // -----------------------------------------------------------------
             ColumnLayout {
-                Layout.preferredWidth: 470
-                Layout.maximumWidth: 470
+                Layout.preferredWidth: 520
+                Layout.maximumWidth: 520
                 Layout.fillHeight: true
                 spacing: Tokens.spacing.sm
 
+                // -- the picture's header: its name, and its settings
+                /* The gear ABOVE the container, not beside it: the picture
+                   then takes the pane's full width, and the button reads as
+                   heading the thing it settings, the same way the broom
+                   heads the sheet below. The settings sheet it opens lands
+                   under the picture — over the queue, never over the
+                   picture — so what a switch changes is on screen while the
+                   switch is. */
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Tokens.spacing.sm
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: Strings.t("barcode.preview", "Preview")
+                        font.family: Tokens.font.family
+                        font.pixelSize: Tokens.font.overline
+                        font.weight: Font.DemiBold
+                        font.capitalization: Font.AllUppercase
+                        font.letterSpacing: 1.1
+                        color: Fluent.textTertiary
+                    }
+
+                    IconButton {
+                        id: labelSettings
+
+                        glyph: "ic_fluent_settings_20_regular"
+                        glyphSize: Tokens.icon.sm
+                        tooltip: Strings.t("barcode.settings", "Label settings")
+                        onClicked: labelSheet.open()
+                    }
+                }
+
                 // -- what will come out of the printer
                 Rectangle {
+                    id: frame
+
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 220
+                    Layout.preferredHeight: 280
                     radius: Tokens.radius.md
                     color: Fluent.subtleSecondary
                     border.width: 1
@@ -403,7 +746,7 @@ AppDialog {
                     Image {
                         anchors.centerIn: parent
                         /* Bounded by the panel, never enlarged past its own pixels:
-                           a 320x160 label blown up to 470 wide would show the
+                           a 320x160 label blown up to full width would show the
                            operator a smoother barcode than the printer can make. */
                         width: Math.min(parent.width - 2 * Tokens.spacing.md,
                                         sourceSize.width > 0 ? sourceSize.width : 1)
@@ -448,37 +791,6 @@ AppDialog {
                     font.family: Tokens.font.family
                     font.pixelSize: Tokens.font.caption
                     color: Tokens.warning
-                }
-
-                // -- which of the two shapes it is printed in
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Tokens.spacing.sm
-
-                    Text {
-                        text: Strings.t("barcode.format", "Label design")
-                        font.family: Tokens.font.family
-                        font.pixelSize: Tokens.font.overline
-                        font.weight: Font.DemiBold
-                        font.capitalization: Font.AllUppercase
-                        font.letterSpacing: 1.1
-                        color: Fluent.textTertiary
-                    }
-
-                    Item { Layout.fillWidth: true }
-
-                    Segmented {
-                        id: design
-                        items: dialog.formatLabels
-
-                        /* Segmented assigns its own currentIndex from a MouseArea,
-                           which would destroy a binding placed on it — the same
-                           trap LoginPage's language picker documents. So the link
-                           to the setting runs imperatively both ways; assigning an
-                           unchanged value emits nothing, so it converges. */
-                        onCurrentIndexChanged: dialog.chooseFormat(currentIndex)
-                        Component.onCompleted: currentIndex = dialog.formatIndex()
-                    }
                 }
 
                 // -- the sheet

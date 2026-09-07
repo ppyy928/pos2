@@ -232,8 +232,11 @@ AppDialog {
                                      ? [] : dialog.ctrl.find(text, 12)
                 }
                 onBrowsed: {
+                    /* The whole catalogue, not a capped find: the browse list is
+                       the shared select-product table, and a ceiling on it is
+                       the row the operator wanted made invisible. */
                     if (dialog.ctrl)
-                        dialog.catalogue = dialog.ctrl.find("", 500)
+                        dialog.catalogue = dialog.ctrl.catalogue()
                 }
                 onAccepted: (text) => dialog.submit(text)
                 onPicked: (product) => {

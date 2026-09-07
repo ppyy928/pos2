@@ -77,7 +77,19 @@ AppDialog {
     readonly property real debt: row.debt !== undefined ? row.debt : 0
     readonly property bool owes: debt > 0
 
+    /* The payment panel, folded away until there is a payment to take. While a
+       payment is being CORRECTED it holds that payment instead: the pen on a
+       row puts it there, and the panel answers through the payments register
+       rather than by recording. */
     property bool paying: false
+    property var editingPayment: null
+
+    /* What a correction is measured against. The payment being corrected was
+       already taken, so the account can absorb a figure up to the debt PLUS
+       that payment — the same arithmetic the customer panel uses, with the sign
+       this account carries. */
+    readonly property real correctedBase: editingPayment
+                                         ? Number(editingPayment.amount) : 0
 
     property string invoicesQuery: ""
     property string paymentsQuery: ""
@@ -112,6 +124,11 @@ AppDialog {
     }
 
     function openPayment() {
+        /* A new payment, never a leftover correction: the button and the pen
+           are two different questions, and the panel has to know which one it
+           is answering. */
+        editingPayment = null
+        amount.text = ""
         paying = true
         amount.forceActiveFocus()
     }
@@ -165,6 +182,21 @@ AppDialog {
         confirmDeletePayment.open()
     }
 
+    /* The pen on a payment row: the same panel that takes one, holding the row
+       it is going to correct. The amount field opens on the recorded figure,
+       selected, so the first keystroke replaces it — the panel's own rule for a
+       figure being corrected. */
+    function askEditPayment(row) {
+        var payment = paymentAt(row)
+        if (!payment || !canManage)
+            return
+        editingPayment = payment
+        paying = true
+        amount.text = String(payment.amount)
+        amount.forceActiveFocus()
+        amount.selectAll()
+    }
+
     // -- money ------------------------------------------------------------
     function money(value) {
         return ctrl ? ctrl.moneyText(value) : "—"
@@ -176,18 +208,30 @@ AppDialog {
     }
 
     readonly property real entered: number(amount.text)
-    readonly property real remaining: Math.max(0, debt - entered)
-    readonly property bool validPayment: entered > 0 && entered <= debt
+    /* While correcting, the old figure is returned to the account first —
+       that is what "the balance moves by the difference" means here, and it is
+       why the ceiling and the remainder both add `correctedBase`. */
+    readonly property real remaining: Math.max(0, debt + correctedBase - entered)
+    readonly property bool validPayment: entered > 0
+                                         && entered <= debt + correctedBase
 
     function pay() {
         error.text = ""
         notice = ""
         if (!validPayment) {
-            error.text = entered > debt
+            error.text = entered > debt + correctedBase
                          ? Strings.t("payments.over_debt",
                                      "That is more than this account owes.")
                          : Strings.t("amount.error", "Enter a valid amount.")
             amount.forceActiveFocus()
+            return
+        }
+        /* A correction is the register's business, not this controller's: the
+           register owns the payment tables for both kinds of party, and it is
+           what answers with the new balance. */
+        if (editingPayment) {
+            if (paymentsCtrl)
+                paymentsCtrl.update(editingPayment.id, "supplier", amount.text)
             return
         }
         if (ctrl)
@@ -296,11 +340,14 @@ AppDialog {
             ltr: true,
             tone: "success"
         },
-        /* No pen: a payment is not edited, because a corrected receipt is a different
-           receipt. It is deleted — which puts the balance back — and taken again. */
+        /* The pen corrects the amount in place — the balance moves by the
+           difference, and the row keeps its date and its place in the history.
+           The bin stays for the payment that should not exist at all, which is
+           a different question from "the figure was typed wrong". */
         {
             key: "actions",
             actions: [
+                { id: "edit", enabled: dialog.canManage },
                 { id: "delete", enabled: dialog.canManage }
             ]
         }
@@ -321,10 +368,11 @@ AppDialog {
 
         function onPaid(result) {
             /* Stays open with the new balance: a rep often settles two invoices in
-               one visit, and reopening the record to do the second is a step for
-               nothing. */
+            one visit, and reopening the record to do the second is a step for
+            nothing. */
             amount.text = ""
             dialog.paying = false
+            dialog.editingPayment = null
             dialog.reload()
             dialog.notice = Strings.tf("suppliers.paid", "Paid — {debt} still owed",
                                        { debt: result.debt_text })
@@ -336,7 +384,9 @@ AppDialog {
     }
 
     /* The payments register refuses out loud, on whichever screen asked it to: this
-       record can now delete a payment, so it has to be able to hear "no". */
+        record can now correct and delete a payment, so it has to be able to hear
+        "no" — and it hears "done" the same way, because a correction is the
+        register's write, not this controller's. */
     Connections {
         target: dialog.paymentsCtrl
         ignoreUnknownSignals: true
@@ -345,8 +395,24 @@ AppDialog {
             error.text = message
         }
 
+        function onUpdated(result) {
+            /* Gated on the panel being open in correct mode: the register
+               reports every payment corrected anywhere, and this dialog is
+               modal — but a plain guard is cheaper than an argument about
+               what can happen behind a scrim. */
+            if (!dialog.visible || dialog.editingPayment === null)
+                return
+            amount.text = ""
+            dialog.editingPayment = null
+            dialog.paying = false
+            dialog.reload()
+            dialog.notice = Strings.tf("payments.corrected",
+                                       "Payment corrected — debt now {debt}",
+                                       { debt: result.debt_text })
+        }
+
         /* A deleted payment moves this supplier's balance, and the figures at the top
-           of this record are the reason it is open. */
+        of this record are the reason it is open. */
         function onInvalidated() {
             dialog.reload()
         }
@@ -564,8 +630,11 @@ AppDialog {
             ]
 
             onActivated: (key) => {
-                if (key !== "payments")
+                if (key !== "payments") {
                     dialog.paying = false
+                    dialog.editingPayment = null
+                    amount.text = ""
+                }
             }
         }
 
@@ -683,7 +752,13 @@ AppDialog {
 
                         Field {
                             Layout.maximumWidth: 320
-                            label: Strings.t("amount.entered", "Amount")
+                            /* The word says which question the panel is
+                               answering: paying the rep, or correcting the
+                               figure that was paid. */
+                            label: dialog.editingPayment
+                                   ? Strings.t("payments.edit.amount",
+                                               "Corrected amount")
+                                   : Strings.t("amount.entered", "Amount")
                             required: true
 
                             RowLayout {
@@ -697,11 +772,37 @@ AppDialog {
                                     onAccepted: dialog.pay()
                                 }
 
+                                /* While correcting, "all" is the balance plus
+                                   the payment being corrected: the figure that
+                                   leaves the account at zero. */
                                 GlyphButton {
                                     text: Strings.t("amount.all", "All")
-                                    onClicked: amount.text = String(dialog.debt)
+                                    onClicked: amount.text = String(
+                                        dialog.debt + dialog.correctedBase)
                                 }
                             }
+                        }
+
+                        /* What is being corrected, named: the panel sits below
+                           the list, and "which payment am I rewriting" is a
+                           question a number field cannot answer. The sentence
+                           also states the rule — replaces, not adds — which is
+                           the one mistake a correction panel exists to
+                           prevent. Sized to its content rather than filled:
+                           the filler below keeps the column and the buttons
+                           where they are in either mode. */
+                        Text {
+                            visible: dialog.editingPayment !== null
+                            text: Strings.tf("payments.edit.hint",
+                                             "Replaces {amount} — the balance moves by the difference.",
+                                             { amount: dialog.editingPayment
+                                               ? dialog.editingPayment.amount_text
+                                               : "" })
+                            elide: Text.ElideRight
+                            maximumLineCount: 1
+                            font.family: Tokens.font.family
+                            font.pixelSize: Tokens.font.caption
+                            color: Fluent.textTertiary
                         }
 
                         Item { Layout.fillWidth: true }
@@ -749,6 +850,7 @@ AppDialog {
                                 amount.text = ""
                                 error.text = ""
                                 dialog.paying = false
+                                dialog.editingPayment = null
                             }
                         }
                     }
@@ -765,7 +867,9 @@ AppDialog {
                                : Strings.t("supplier.no_payments",
                                            "Nothing has been paid to this supplier.")
                     onActionTriggered: (row, action) => {
-                        if (action === "delete")
+                        if (action === "edit")
+                            dialog.askEditPayment(row)
+                        else if (action === "delete")
                             dialog.askDeletePayment(row)
                     }
                 }

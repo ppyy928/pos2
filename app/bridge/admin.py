@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+from typing import ClassVar
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
@@ -138,9 +139,9 @@ SPEC: dict[str, dict] = {
     "receipt.auto_print": {"group": "receipt", "kind": "flag",
                            "key": "settings.receipt.auto_print",
                            "text": "Print automatically after a sale"},
-    "receipt.show_store_info": {"group": "receipt", "kind": "flag",
-                                "key": "settings.receipt.show_store_info",
-                                "text": "Show the shop's details"},
+    # NOT the same switch as `receipt.show_store_info`, which pos's own settings
+    # screen binds and no renderer reads — see UNSHOWN below. This one is what
+    # the receipt engine actually gates the shop's name on.
     "receipt.show_store": {"group": "receipt", "kind": "flag",
                            "key": "settings.receipt.show_store",
                            "text": "Show the shop name"},
@@ -193,17 +194,36 @@ SPEC: dict[str, dict] = {
     "barcode.show_price": {"group": "barcode", "kind": "flag",
                            "key": "settings.barcode.show_price",
                            "text": "Print the price"},
-    "barcode.show_bars": {"group": "barcode", "kind": "flag",
-                          "key": "settings.barcode.show_bars",
-                          "text": "Print the bars"},
-    "barcode.show_number": {"group": "barcode", "kind": "flag",
-                            "key": "settings.barcode.show_number",
-                            "text": "Print the code as digits"},
+    # NOT OFFERED, deliberately: `barcode.show_bars` and `barcode.show_number`
+    # exist in pos's DEFAULT_SETTINGS, but the label engine pins both on — a
+    # sticker without bars or digits is paper, not a label — and pos's own
+    # settings page does not offer them either. A switch here would be a
+    # switch that writes a value the renderer never reads; the label sheet
+    # offers the three content switches that do go through `load_label_options`.
     # -- the till itself --------------------------------------------------
     "security.auto_lock_minutes": {"group": "security", "kind": "number",
                                    "key": "settings.security.auto_lock",
                                    "text": "Lock after (minutes, 0 = never)"},
 }
+
+#: Keys in pos's DEFAULT_SETTINGS that this screen refuses to show, and the one
+#: thing `load` drops outright. A key absent from SPEC is still listed — as text,
+#: so a key pos added is visible the day it arrives — so the deliberately dead
+#: ones have to be named here instead. See the comment at the barcode group for
+#: which and why.
+#:
+#: `receipt.show_store_info` is pos's own dead switch: its settings screen binds
+#: a checkbox to it (pages/settings.py:404) and no renderer has ever read it —
+#: the receipt engine gates the shop's name on `receipt.show_store`
+#: (core/receipt_printing.py:561) and the phone, the address and the registration
+#: numbers each have a live switch of their own. A second "show the shop"
+#: switch beside the real one is at best a duplicate and at worst the one that
+#: gets flipped while the receipt stays unchanged.
+UNSHOWN = frozenset({
+    "barcode.show_bars",
+    "barcode.show_number",
+    "receipt.show_store_info",
+})
 
 #: Group order and their labels — pos names five of the six.
 GROUPS: tuple[tuple[str, str, str], ...] = (
@@ -221,16 +241,71 @@ GROUPS: tuple[tuple[str, str, str], ...] = (
 
 
 
+#: The base UI size, and it must stay equal to `Fluent.typography.body` — the
+#: same rule run.py's BASE_FONT_PX documents. Duplicated rather than imported
+#: because run.py imports this package, and the import would be circular.
+_BASE_FONT_PX = 17
+
+
 class Settings(QObject):
     groupsChanged = Signal()
     saved = Signal(str)
     rejected = Signal(str)
+    fontScaleChanged = Signal()
 
     def __init__(self, i18n: QObject, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._i18n = i18n
         self._groups: list[dict] = []
         i18n.languageChanged.connect(self.load)
+
+    #: pos's own ratios for the same three sizes (core/tokens.py: FONT_SCALES —
+    #: body 15 at normal, 17 at large, 19 at extra_large). The same distances,
+    #: expressed as factors of this front end's own base, so the step a shop
+    #: chose in the older app is the step it gets here.
+    _FONT_FACTORS: ClassVar[dict[str, float]] = {
+        "normal": 1.0, "large": 17.0 / 15.0, "extra_large": 19.0 / 15.0,
+    }
+
+    @Property(float, notify=fontScaleChanged)
+    def fontScale(self) -> float:
+        """The type scale the whole UI is drawn at, as a factor of normal.
+
+        `ui.font_scale` was a stored value nothing read: the switch chose a
+        size and the app carried on at normal, which is the one dishonest
+        control this screen had. Tokens.font multiplies every type size it
+        hands out by this, so the choice is applied by every Text that asks
+        for type — and re-applied the moment the setting is written, because
+        this property re-notifies.
+
+        Read from the store on every ask rather than cached: one indexed read
+        per binding refresh, and a cache would have to be invalidated by writes
+        this object does not see (there is only one writer today, but the
+        Settings page and any future launcher are both allowed to touch the
+        database).
+        """
+        database = self._database_quiet()
+        if database is None:
+            return 1.0
+        try:
+            stored = str(database.get_setting("ui.font_scale", "normal"))
+        except Exception:  # noqa: BLE001
+            diagnostics.log.debug("ui.font_scale unreadable", exc_info=True)
+            return 1.0
+        return self._FONT_FACTORS.get(stored, 1.0)
+
+    def _database_quiet(self):
+        """The settings store, without a toast.
+
+        `fontScale` is a property: asked during QML binding evaluation, where
+        an emitted `rejected` would reach a page that is not on screen, and a
+        read that cannot be served answers 1.0 rather than complaining.
+        """
+        try:
+            return legacy.database()
+        except Exception:  # noqa: BLE001
+            diagnostics.log.debug("settings store unavailable", exc_info=True)
+            return None
 
     @Property("QVariantList", notify=groupsChanged)
     def groups(self) -> list:
@@ -252,6 +327,12 @@ class Settings(QObject):
         keys = list(defaults) + [key for key in SPEC if key not in defaults]
 
         for key in keys:
+            if key in UNSHOWN:
+                # Dropped on purpose, and the reason is named there: an untaught
+                # key is shown as text so it is visible that something arrived,
+                # which is exactly why a deliberately dead one has to say so
+                # here rather than by being left out of SPEC.
+                continue
             spec = SPEC.get(key)
             if spec is None:
                 # A key pos added that this table has not been taught. Shown as
@@ -326,12 +407,13 @@ class Settings(QObject):
         self.saved.emit(key)
 
     def _apply(self, key: str, value: str) -> None:
-        """Two settings are also the running application.
+        """Three settings are also the running application.
 
-        Language and theme are stored *and* switched: a screen that saves "dark"
-        and stays light is asking to be pressed twice. Text size is stored only —
-        it is applied to the QApplication font at startup, and re-applying it to a
-        live window is a change for run.py to make, not for a controller.
+        Language, theme and text size are stored *and* switched: a screen that
+        saves "dark" and stays light is asking to be pressed twice. Text size
+        re-notifies `fontScale`, which every `Tokens.font.*` binding reads, and
+        moves the base font with it so the controls that inherit the
+        application font follow the same step.
         """
         if key == "ui.language":
             self._i18n.setLanguage(value)
@@ -345,6 +427,34 @@ class Settings(QObject):
                     manager.setTheme(value)
             except Exception as exc:  # noqa: BLE001
                 diagnostics.log.warning("could not switch the theme (%s)", exc)
+            return
+        if key == "ui.font_scale":
+            self.fontScaleChanged.emit()
+            self.apply_base_font()
+
+    def apply_base_font(self) -> None:
+        """Move the application font to the stored text size.
+
+        QML's own Text draws through `Tokens.font`, which scales on its own;
+        the controls that do not name a pixel size — a ComboBox's popup items,
+        a TextField's typed characters — inherit the application font, and a
+        size switch that moved one and not the other would have headings
+        climbing over an unchanged body. `run.py` sets this same font before
+        any control exists; this is both the startup half (called by the
+        bridge, before any QML is loaded) and the live half (called again when
+        the setting is written).
+        """
+        try:
+            from PySide6.QtGui import QGuiApplication
+
+            size = max(1, round(_BASE_FONT_PX * self.fontScale))
+            font = QGuiApplication.font()
+            if font.pixelSize() == size:
+                return
+            font.setPixelSize(size)
+            QGuiApplication.setFont(font)
+        except Exception:  # noqa: BLE001
+            diagnostics.log.warning("could not apply the text size", exc_info=True)
 
     def _database(self):
         try:

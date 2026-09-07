@@ -8,37 +8,44 @@ import Mizan
  * Find a sale. Ported from pos/app/dialogs/selectors.py::SaleSelectorDialog,
  * which the till opens on F1 to start a return.
  *
- *   ┌──────────────────────────────────────────────────────────────────────────────┐
- *   │ Select a sale to return                                                      │
- *   │ [ number, customer, or a product on it ] [👤 Any customer] [From] [To] [⟲]   │
- *   │ ┌───────────────────────────────────┬──────────────────────────────────────┐ │
- *   │ │ TRX-0183  30/08 01:49  Azizi  ... │ TRX-0183 · 30/08/2026 01:49          │ │
- *   │ │ TRX-0182  29/08 16:45  Walk-in    │ Atlas Beans   2   250.00   500.00    │ │
- *   │ │ TRX-0181  28/08 11:42  Walk-in    │ Atlas Rice    1    80.00    80.00 ¹  │ │
- *   │ └───────────────────────────────────┴──────────────────────────────────────┘ │
- *   │                                                    [ Cancel ] [ Select ]     │
- *   └──────────────────────────────────────────────────────────────────────────────┘
+ *   ┌──────────────────────────────────────────────────────────────────────┐
+ *   │ Select a sale to return                                              │
+ *   │ [ number, customer, or a product on it                        ✕ ]    │
+ *   │ [👤 Any customer      ] [From 📅]      [To 📅]                 ⟲     │
+ *   │ NUMBER        DATE            CUSTOMER       PAYMENT  TOTAL   ⟲ret   │
+ *   │ TRX-0183  30/08 01:49  Azizi Bouzid       [Partial] 12 480   ↩      │
+ *   │ TRX-0182  29/08 16:45  Walk-in            [Cash]    1 980    ↩      │
+ *   │                                              2 sales  [Cancel][Select]│
+ *   └──────────────────────────────────────────────────────────────────────┘
  *
- * WHY TWO TABLES
+ * ONE TABLE, AND THE RETURN DIALOG ON TOP OF IT
  *
- * A sale is identified by what was in it. The number is a reference nobody memorises,
- * the timestamp narrows to a day at best, and "Walk-in" identifies nothing at all —
- * so with one list the operator picks a row, loses the dialog to the return screen,
- * finds it is the wrong ticket, and starts again. The right-hand table answers "is
- * this the one?" before the pick is committed: the lines, their quantities, and how
- * much of each has already been returned.
+ * There were two tables: the list, and a preview of the picked row's lines. The
+ * preview answered "is this the one?" — but every line it showed reappeared one
+ * tap later in the return dialog, beside the stepper that actually takes the
+ * goods back, where the question is not "what is on it" but "how much of it is
+ * coming back". A pane that can only be looked at is a detour on the way to the
+ * screen that can act.
  *
- * It also makes the product search legible. Searching "cola" narrows the left list to
- * every ticket with a cola on it; the pane on the right is where you see WHICH cola
- * and how many, which is the actual question behind the search.
+ * So the row carries the act instead: the return icon opens the return dialog
+ * ON TOP of this one (DialogHost stacks, it does not swap), the lines arrive in
+ * the dialog that can do something with them, and cancelling it drops the
+ * operator back on the list — still open, still filtered, still where they left
+ * it. That is the wrong-ticket answer the preview used to give, and a better
+ * one: the old flow closed this dialog to open the next, so a wrong pick meant
+ * starting the search over from a blank screen.
  *
- * WHY IT IS THIS WIDE
+ * When the return lands (`sales.returned`), this dialog closes itself: the
+ * Returns page opened it to make one return, and the return is made. Everything
+ * in between — Escape, Cancel, a refusal — leaves the list standing.
  *
- * Five columns of sale plus five of line do not fit in a dialog sized for a
- * confirmation. `preferredWidth` asks for a desktop's worth and `AppDialog` caps it
- * at the window, so on a 1366 till it is the window minus its breathing margin and on
- * a wide screen it stops growing at 1760 — past that the two tables are just further
- * apart.
+ * THE RETURN ACTION
+ *
+ * The icon is RowActions' `return`: arrow-undo, warning tone, the same glyph the
+ * sales page's row uses for the same act. Gated on `sales.edit` exactly as the
+ * New return button that opened this dialog is. Enter, double-click and the
+ * Select button all do what the icon does, because they always did — the icon
+ * is the affordance the row was missing, not a second behaviour.
  *
  * THE FILTERS
  *
@@ -48,6 +55,20 @@ import Mizan
  * timestamp, either end optional. Nothing here is applied on a timer: the search box
  * debounces (a scanner's burst is not four queries), and every other control queries
  * on the change, because a filter that waits is a filter the operator presses twice.
+ *
+ * The filters sit directly above the table they narrow, and the three fields of
+ * the second row share its whole width in proportion (5:2:2) with minimums, so
+ * none of them is ever squeezed to unreadability by the others or stranded
+ * beside a dead gap.
+ *
+ * WHY THE CUSTOMER FIELD IS THE TILL'S OWN CONTROL
+ *
+ * It was a button that opened a second modal over this one — the third window an
+ * operator sat behind while answering one question. `PartySelect` is the same field
+ * the counter attaches customers with and the delivery form attaches suppliers
+ * with: tap, type, pick, done, without this dialog ever going away. The pick is
+ * a local answer here — a filter, not an attachment — so nothing is sent to the cart;
+ * the field's contract is the same, only the consequence differs.
  */
 AppDialog {
     id: dialog
@@ -55,13 +76,18 @@ AppDialog {
     property var context: ({})
 
     readonly property var ctrl: (typeof app !== "undefined" && app) ? app.sales : null
+    readonly property var customers: (typeof app !== "undefined" && app)
+                                     ? app.customers : null
     readonly property var workflows: (typeof app !== "undefined" && app)
                                      ? app.workflows : null
+    readonly property var session: (typeof app !== "undefined" && app)
+                                   ? app.session : null
     readonly property string purpose: context && context.purpose ? context.purpose : ""
 
-    /* Wide, and as wide as the window when the window is narrower than this. */
-    preferredWidth: 1760
-    preferredHeight: 880
+    /* One table's worth. `AppDialog` caps it at the window, so a narrower screen
+       takes the window minus its breathing margin. */
+    preferredWidth: 1280
+    preferredHeight: 820
 
     modal: true
     closePolicy: QC.Popup.CloseOnEscape
@@ -77,17 +103,19 @@ AppDialog {
     property string query: ""
     property int customerId: 0
     property string customerName: ""
+    property string customerPhone: ""
     property string dateFrom: ""
     property string dateTo: ""
 
     readonly property bool filtered: query !== "" || customerId !== 0
                                      || dateFrom !== "" || dateTo !== ""
 
-    /* The sale under the cursor on the left, and its lines. `lines` is loaded per
-       selection rather than with the list: a page of 100 sales is 100 line queries
-       nobody asked for, and the operator reads one at a time. */
-    property var lines: []
-    property var picked: null
+    /* The act this dialog exists for, gated exactly as the New return button
+       that opened it is gated. `revision` first: `can()` is a slot with no
+       notifier, so a binding that only calls it never re-evaluates when
+       somebody signs in — SalesPage's own note. */
+    readonly property bool canReturn: session && session.revision >= 0
+                                      && session.can("sales.edit")
 
     readonly property int pageSize: 100
 
@@ -101,21 +129,12 @@ AppDialog {
         /* The list is about to be replaced, so nothing is selected: keeping the row
            index would point at a different sale. */
         salesTable.currentRow = -1
-        picked = null
-        lines = []
     }
 
-    function showLines(row) {
-        var summary = ctrl ? ctrl.rowAt(row) : null
-        picked = summary
-        if (!summary || !ctrl) {
-            lines = []
-            return
-        }
-        var sale = ctrl.sale(summary.id)
-        lines = sale && sale.items ? sale.items : []
-    }
-
+    /* Open the return dialog for a row — stacked above this one, which stays
+       open. See the header: the list is the place the operator comes back to
+       when the ticket is the wrong one, so it must not be destroyed to make
+       room for the answer. */
     function choose(index) {
         var row = ctrl ? ctrl.rowAt(index) : null
         if (!row)
@@ -123,7 +142,6 @@ AppDialog {
         if (workflows)
             workflows.open(purpose === "return" ? "return_create" : "sale_transaction",
                            { sale_id: row.id })
-        dialog.close()
     }
 
     function submit() {
@@ -138,9 +156,10 @@ AppDialog {
         query = ""
         customerId = 0
         customerName = ""
+        customerPhone = ""
         dateFrom = ""
         dateTo = ""
-        searchField.text = ""
+        filters.clear()
         fromField.value = ""
         toField.value = ""
         reload()
@@ -148,24 +167,40 @@ AppDialog {
 
     Component.onCompleted: {
         reload()
-        searchField.forceActiveFocus()
+        filters.focusSearch()
     }
 
     /* A scanner types a barcode in one burst and a person types a name in several
-       keystrokes; both arrive here as onTextChanged. 250ms turns either into one
-       query. */
+       keystrokes; both arrive here as onSearchTextChanged. 250ms turns either into
+       one query. */
     Timer {
         id: debounce
         interval: 250
         onTriggered: {
-            dialog.query = searchField.text.trim()
+            dialog.query = filters.searchText.trim()
             dialog.reload()
         }
+    }
+
+    /* The return being made is this dialog's job done: the Returns page opened
+       it for one return, the return exists, and leaving the list standing under
+       a finished task is a screen that has to be dismissed for no reason. The
+       return dialog closes itself on the same signal, from its own layer on top;
+       the two closes pop the stack in whichever order they arrive. */
+    Connections {
+        target: dialog.ctrl
+        ignoreUnknownSignals: true
+
+        function onReturned(result) { dialog.close() }
     }
 
     // =====================================================================
     // COLUMNS
     // =====================================================================
+    readonly property var rowActions: [
+        { id: "return", enabled: dialog.canReturn }
+    ]
+
     readonly property var saleColumns: [
         {
             key: "number",
@@ -201,66 +236,12 @@ AppDialog {
             numeric: true,
             width: 160,
             ltr: true
+        },
+        {
+            key: "actions",
+            actions: dialog.rowActions
         }
     ]
-
-    readonly property var lineColumns: [
-        {
-            key: "name",
-            header: Strings.t("sales.col.product", "Product"),
-            stretch: true
-        },
-        {
-            key: "qty_text",
-            header: Strings.t("purchases.col.qty", "Qty"),
-            numeric: true,
-            width: 110,
-            ltr: true
-        },
-        {
-            key: "price_text",
-            header: Strings.t("sales.col.price", "Unit price"),
-            numeric: true,
-            width: 150,
-            ltr: true
-        },
-        {
-            key: "total_text",
-            header: Strings.t("sales.col.total", "Total"),
-            numeric: true,
-            width: 150,
-            ltr: true
-        },
-        {
-            /* What has already gone back. A line that is fully returned is why an
-               operator opens the wrong ticket twice, so it is on the row and toned:
-               anything above zero is the reason to look twice. */
-            key: "returned_text",
-            header: Strings.t("sales.col.returned", "Returned"),
-            numeric: true,
-            width: 130,
-            ltr: true,
-            tone: function (r) { return r.returned > 0 ? "warning" : "" }
-        }
-    ]
-
-    /* The lines come from the bridge with everything formatted except this one: the
-       return figure is a quantity the bridge reports as a number. */
-    readonly property var lineRows: {
-        var out = []
-        for (var i = 0; i < lines.length; i++) {
-            var line = lines[i]
-            out.push({
-                name: line.name,
-                qty_text: line.qty_text,
-                price_text: line.price_text,
-                total_text: line.total_text,
-                returned: line.returned,
-                returned_text: line.returned > 0 ? "\u200e" + line.returned : "—"
-            })
-        }
-        return out
-    }
 
     // =====================================================================
     // LAYOUT
@@ -268,58 +249,84 @@ AppDialog {
     contentItem: ColumnLayout {
         spacing: Tokens.spacing.md
 
-        // -----------------------------------------------------------------
-        // THE FILTERS
-        // -----------------------------------------------------------------
+        FilterBar {
+            id: filters
+
+            Layout.fillWidth: true
+            placeholder: Strings.t("sales.search.smart.ph",
+                                   "Number, customer, or a product on the sale")
+            searchTooltip: Strings.t("sales.search.smart.hint",
+                                     "Every word has to match something.")
+
+            onSearchTextChanged: debounce.restart()
+
+            /* Enter is "I mean it now", so it does not wait for the timer —
+               and a search that narrowed to one sale takes it. */
+            onAccepted: {
+                debounce.stop()
+                dialog.query = filters.searchText.trim()
+                dialog.reload()
+                dialog.submit()
+            }
+        }
+
+        /* The rest of the filters: the customer, the range, and the reset.
+           Every one of them takes a share of the width rather than a fixed
+           slice with a dead spacer after it — a row that ends in a gap is a
+           row of squeezed fields on one window and a row of lost space on
+           another, and neither says "these all filter the table below". */
         RowLayout {
             Layout.fillWidth: true
             spacing: Tokens.spacing.sm
 
-            QC.TextField {
-                id: searchField
+            /* The customer, as a record — chosen with the till's own control,
+               not a button that opens a second window over this one. The
+               customer is a filter here, not an attachment, so the pick is
+               answered locally and nothing touches the cart. */
+            PartySelect {
+                id: customerFilter
+
                 Layout.fillWidth: true
-                Layout.minimumWidth: 320
-                Layout.preferredHeight: Tokens.size.control
-                placeholderText: Strings.t("sales.search.smart.ph",
-                                           "Number, customer, or a product on the sale")
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.body
+                Layout.preferredWidth: 5
+                /* A floor, not a preference: the dates below have their own
+                   minimum, and whichever of the three is squeezed to nothing
+                   by the other two is the one the operator needed. */
+                Layout.minimumWidth: 220
 
-                onTextChanged: debounce.restart()
-                /* Enter is "I mean it now", so it does not wait for the timer. */
-                onAccepted: {
-                    debounce.stop()
-                    dialog.query = text.trim()
-                    dialog.reload()
-                    dialog.submit()
+                active: dialog.customerId !== 0
+                title: dialog.customerId !== 0
+                       ? dialog.customerName
+                       : Strings.t("sales.filter.customer", "Any customer")
+                subtitle: dialog.customerId !== 0
+                          ? dialog.customerPhone
+                          : Strings.t("sales.filter.customer.hint",
+                                      "Tap to filter by customer")
+                removeTip: Strings.t("sales.filter.customer", "Any customer")
+
+                rows: dialog.customers ? dialog.customers.rows : []
+                placeholder: Strings.t("select_customer.search.ph",
+                                       "Search name or phone")
+                emptyText: Strings.t("select_customer.no_match",
+                                     "No customer matches that.")
+
+                /* Whole list, once, per open: `search("")` is unpaged and the
+                   sheet filters it in QML — the same contract the till's field
+                   uses. */
+                onListRequested: {
+                    if (dialog.customers)
+                        dialog.customers.search("")
                 }
-
-                QC.ToolTip.text: Strings.t("sales.search.smart.hint",
-                                           "Every word has to match something.")
-                QC.ToolTip.visible: hovered
-                QC.ToolTip.delay: 700
-            }
-
-            /* The customer, as a record. A combo box of 121 names is a scroll, so this
-               is the same searchable picker the counter uses — told not to touch the
-               cart, because narrowing a list is not attaching a customer to a sale. */
-            GlyphButton {
-                glyph: "ic_fluent_person_20_regular"
-                outlined: dialog.customerId === 0
-                text: dialog.customerId === 0
-                      ? Strings.t("sales.filter.customer", "Any customer")
-                      : dialog.customerName
-                onClicked: customerPicker.open()
-            }
-
-            IconButton {
-                visible: dialog.customerId !== 0
-                glyph: "ic_fluent_dismiss_20_regular"
-                glyphSize: Tokens.icon.sm
-                tooltip: Strings.t("sales.filter.customer", "Any customer")
-                onClicked: {
+                onPicked: (party) => {
+                    dialog.customerId = party.id
+                    dialog.customerName = party.name
+                    dialog.customerPhone = party.phone !== undefined
+                                           ? party.phone : ""
+                    dialog.reload()
+                }
+                onRemoveRequested: {
                     dialog.customerId = 0
                     dialog.customerName = ""
+                    dialog.customerPhone = ""
                     dialog.reload()
                 }
             }
@@ -333,7 +340,10 @@ AppDialog {
 
             DateField {
                 id: fromField
-                implicitWidth: 180
+
+                Layout.fillWidth: true
+                Layout.preferredWidth: 2
+                Layout.minimumWidth: 150
                 value: dialog.dateFrom
                 onEdited: (value) => {
                     dialog.dateFrom = value
@@ -350,7 +360,10 @@ AppDialog {
 
             DateField {
                 id: toField
-                implicitWidth: 180
+
+                Layout.fillWidth: true
+                Layout.preferredWidth: 2
+                Layout.minimumWidth: 150
                 value: dialog.dateTo
                 onEdited: (value) => {
                     dialog.dateTo = value
@@ -367,83 +380,26 @@ AppDialog {
         }
 
         // -----------------------------------------------------------------
-        // THE TWO TABLES
+        // THE LIST
         // -----------------------------------------------------------------
-        RowLayout {
+        DataTable {
+            id: salesTable
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: Tokens.spacing.md
+            columns: dialog.saleColumns
+            model: dialog.ctrl ? dialog.ctrl.rows : null
+            emptyIcon: "ic_fluent_receipt_20_regular"
+            emptyText: dialog.filtered
+                       ? Strings.t("state.no_results.title", "No matches")
+                       : Strings.t("table.empty", "Nothing to show")
 
-            /* 5:4. The sales list is the one being scanned, so it leads; the lines
-               pane needs enough for a product name beside four figures. Both are
-               `fillWidth`, so a narrow window shrinks them together instead of
-               dropping one off the edge. */
-            DataTable {
-                id: salesTable
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.preferredWidth: 5
-                columns: dialog.saleColumns
-                model: dialog.ctrl ? dialog.ctrl.rows : null
-                emptyIcon: "ic_fluent_receipt_20_regular"
-                emptyText: dialog.filtered
-                           ? Strings.t("state.no_results.title", "No matches")
-                           : Strings.t("table.empty", "Nothing to show")
-
-                onCurrentRowChanged: dialog.showLines(currentRow)
-                onRowActivated: (row) => dialog.choose(row)
+            /* The icon on the row and the activation of the row are the same
+               act — see THE RETURN ACTION above. */
+            onActionTriggered: (row, action) => {
+                if (action === "return")
+                    dialog.choose(row)
             }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.preferredWidth: 4
-                spacing: Tokens.spacing.xs
-
-                /* Which sale the pane is showing. Without it the two tables are two
-                   lists side by side and nothing says they are related. */
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Tokens.spacing.sm
-
-                    Text {
-                        text: Strings.t("sales.lines.title", "What is on it")
-                        font.family: Tokens.font.family
-                        font.pixelSize: Tokens.font.overline
-                        font.weight: Font.DemiBold
-                        font.capitalization: Font.AllUppercase
-                        font.letterSpacing: 0.8
-                        color: Fluent.textSecondary
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        visible: dialog.picked !== null
-                        text: dialog.picked
-                              ? "\u200e" + dialog.picked.number + "  ·  "
-                                + dialog.picked.when + "  ·  " + dialog.picked.total
-                              : ""
-                        font.family: Tokens.font.family
-                        font.pixelSize: Tokens.font.caption
-                        font.features: Tokens.figures
-                        color: Fluent.textPrimary
-                        elide: Text.ElideRight
-                    }
-                }
-
-                DataTable {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    columns: dialog.lineColumns
-                    model: dialog.lineRows
-                    emptyIcon: "ic_fluent_list_20_regular"
-                    emptyText: Strings.t("sales.lines.hint",
-                                         "Pick a sale on the left to see its lines.")
-                    /* Double-clicking a line is agreeing to the sale it belongs to:
-                       the operator is looking at the goods in front of them. */
-                    onRowActivated: (row) => dialog.submit()
-                }
-            }
+            onRowActivated: (row) => dialog.choose(row)
         }
 
         // -----------------------------------------------------------------
@@ -481,19 +437,6 @@ AppDialog {
                          || (dialog.ctrl && dialog.ctrl.rows.length === 1)
                 onClicked: dialog.submit()
             }
-        }
-    }
-
-    // =====================================================================
-    // THE CUSTOMER FILTER'S PICKER
-    // =====================================================================
-    CustomerPickerDialog {
-        id: customerPicker
-        attach: false
-        onPicked: (customer) => {
-            dialog.customerId = customer.id
-            dialog.customerName = customer.name
-            dialog.reload()
         }
     }
 }

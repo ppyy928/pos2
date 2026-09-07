@@ -68,6 +68,10 @@ Item {
     // =====================================================================
     property string placeholder: ""
 
+    /* A hint about what the search matches, shown after the field is hovered a
+       while. Empty (the default) shows nothing. */
+    property string searchTooltip: ""
+
     /* Live text. Bind to it; the page owns any debouncing. */
     readonly property alias searchText: field.text
 
@@ -122,6 +126,10 @@ Item {
             placeholderText: bar.placeholder
             font.family: Tokens.font.family
             font.pixelSize: Tokens.font.body
+
+            QC.ToolTip.text: bar.searchTooltip
+            QC.ToolTip.visible: bar.searchTooltip !== "" && hovered
+            QC.ToolTip.delay: 700
 
             /* The one thing mirroring cannot do for us. Padding is physical, so
                the leading inset — the one that clears the magnifier — has to be

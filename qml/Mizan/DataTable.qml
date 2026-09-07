@@ -110,6 +110,13 @@ Item {
        delete — so it belongs here rather than being rebuilt per page. */
     signal rowContextRequested(int row)
 
+    /* A row was clicked with the left button, alongside the selection that click
+       already made. `rowActivated` needs a double-click or Enter, which is right
+       for a page ("open this") and wrong for a picker: a list whose whole purpose
+       is to choose one row chooses it on the first click, and making the operator
+       click twice would be making them confirm a click. */
+    signal rowClicked(int row)
+
     // Empty state. `emptyIcon` is a Fluent icon name; Icon draws nothing at all
     // for a name that is not in the font index, so it is a property rather than
     // a literal buried in the tree.
@@ -148,6 +155,16 @@ Item {
 
     readonly property int naturalHeight: (showHeader ? Tokens.size.tableHeader : 0)
                                          + count * Tokens.size.tableRow
+
+    /* Bring a row into view without changing the selection — for a caller whose
+       keyboard navigation is driven from outside the table, typically a search
+       field whose arrows move the row the table has selected. ListView scrolls
+       after its own key presses, not after a programmatic currentIndex write, so
+       the table has to be asked on the caller's behalf. */
+    function revealRow(row) {
+        if (row >= 0)
+            rows.positionViewAtIndex(row, ListView.Contain)
+    }
 
     // =====================================================================
     // SORTING
@@ -490,6 +507,8 @@ Item {
                     rows.forceActiveFocus()
                     if (mouse.button === Qt.RightButton)
                         table.rowContextRequested(index)
+                    else
+                        table.rowClicked(index)
                 }
                 onDoubleClicked: {
                     rows.currentIndex = index
