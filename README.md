@@ -138,7 +138,7 @@ every part of it is:
 | Store / forget | `db.store_product_image()` downscales to 640px with Pillow; `db.discard_product_image()` deletes only when no other product still points at the name |
 | The boundary | `app/bridge/images.py` — a stored name becomes a `file:///` URL, a picked URL becomes a path |
 | Choosing one | `qml/dialogs/ProductFormDialog.qml`: the 160px square in the Identity group, and a native `FileDialog`. Nothing is copied until Save |
-| Showing them | `qml/Mizan/PosTile.qml` draws the same square as a band above the name — `showImage` from the grid, `imageSource` from the row |
+| Showing them | `qml/Mizan/PosTile.qml` draws the same square on the card's leading edge, beside the name — `showImage` from the grid, `imageSource` from the row; a product with no photo draws a quiet package glyph in the same square |
 | The switch | `ui.product_images` (Language & Appearance). `Till.imageCards` also requires `db.any_product_image()`, so a shop with no photos keeps the compact cards it has always had |
 
 A photo is never required and a missing file is never an error: both answer "" and both

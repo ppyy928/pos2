@@ -5,7 +5,7 @@ import FluentControls
 import Mizan
 
 /*
- * One product in the POS tile grid — in the two shapes a product card comes in.
+ * One product in the POS tile grid — compact, image-left, text-right.
  *
  *     PosTile {
  *         name: row.name
@@ -19,84 +19,76 @@ import Mizan
  *         onClicked: page.pick(row)
  *     }
  *
- *   WITHOUT A PHOTO (120px)          WITH ONE (244px)
- *   ┌─────────────────────────┐      ┌─────────────────────────┐
- *   │▌ Coca-Cola 1.5L         │      │▌ ┌───────────────────┐  │
- *   │▌                        │      │▌ │                   │  │
- *   │▌ 120,00 DA     ⟨2 pcs⟩  │      │▌ │      [photo]      │  │
- *   └─────────────────────────┘      │▌ └───────────────────┘  │
- *                                    │▌ Coca-Cola 1.5L         │
- *                                    │▌ 120,00 DA     ⟨2 pcs⟩  │
- *                                    └─────────────────────────┘
+ *   WITHOUT A PHOTO (the text tile, 102px)   WITH ONE (the image card, 122px)
+ *   ┌─────────────────────┐                 ┌────────┬──────────────────────┐
+ *   │ Coca-Cola 1.5L      │                 │        │ Coca-Cola 1.5L       │
+ *   │ two-litre bottle,   │                 │ square │ two-litre bottle,    │
+ *   │ chilled             │                 │  84px  │ chilled              │
+ *   │ 120,00 DA     24 pcs│                 │        │ 120,00 DA     24 pcs │
+ *   └─────────────────────┘                 └────────┴──────────────────────┘
  *
- * WHY TWO SHAPES AND NOT TWO COMPONENTS
+ * Both faces give the name two lines — a name forced into one truncated line
+ * is a name an operator cannot match to the goods in front of them, and a
+ * name given three is a money block pushed off the card.
  *
- * Everything below the photo is identical — the same name, the same price, the
- * same stock pill, the same accent, the same press feedback, the same tooltip.
- * Two files would be two places to fix the next thing that is wrong with a
- * product card, and they would drift: this is the mistake the till's own header
- * describes making with its search results. So the photo is a band this card
- * grows, and `showImage` is the one property that says whether it has it.
+ * THE IMAGE CARD IS HORIZONTAL
  *
- * WHY THE GRID DECIDES AND NOT THE ROW
+ * The photo used to be a wide band ABOVE the words, which spent 40% of every
+ * card's height on a picture most products do not have and pushed the name
+ * under it. Here the photo is a true square on the leading edge — aspect-fill,
+ * never stretched, 84px, the size a photo needs to be recognised rather than
+ * admired — and every word sits beside it. The no-photo card keeps the
+ * text-first face it has always had: a product without a photo is the normal
+ * case, not a degraded one, and the placeholder square exists only where a
+ * photo COULD be, so the wall stays one shape.
  *
- * A GridView has ONE cellHeight. If each card chose for itself, a category where
- * three products have photos would lay 244px cards and 120px cards into cells of
- * one size — clipping some and stranding others in a sea of white. So the page
- * asks the controller once (`Till.imageCards`) and every card in the grid answers
- * the same way; a product with no photo of its own gets the placeholder below
- * rather than a different card.
+ * THE PLACEHOLDER IS A QUIET BOX
  *
- * WHY THE PLACEHOLDER IS A GLYPH AND NOT THE PRODUCT'S INITIAL
+ * A product with no photo of its own (or whose file has gone missing — the
+ * bridge answers "" for both) gets a neutral square with a package glyph in
+ * it: no broken-image symbol, no large pastel rectangle, no random colour.
+ * The square keeps the photo's exact dimensions, so a mixed wall stays a grid.
  *
- * The first version put the product's own first letter on its category's colour,
- * on the argument that a repeated grey glyph says "forty things are missing"
- * while a letter differentiates. Rendering it against a real catalogue killed
- * that: shops name products with the brand first — Atlas Milk, Atlas Rice, Atlas
- * Salt — so the wall read A A A A A, which differentiates nothing and competes
- * with the name printed directly underneath it. A quiet "no photo" mark is the
- * honest answer, and the shop photographs its catalogue one product at a time
- * either way.
+ * THE COLOUR IS A STRIPE, NOT A WASH
+ *
+ * pos lets a product carry a user-chosen colour, and it is real data — a
+ * merchant sorts their wall by it. It is drawn as a 3px stripe on the leading
+ * edge and as the square's frame at low strength when there is a photo, and
+ * nowhere else: no pastel wash, no tinted border. A wall of forty
+ * differently-pastelled cards is noise; a wall of quiet cards with a colour
+ * key on the edge is a sort.
  *
  * WHY THE STOCK IS ON EVERY TILE
  *
- * It used to appear only at zero and near zero, on the argument that a number on
- * two hundred tiles is noise. That was wrong in the one direction that matters: a
- * cashier deciding whether to promise the customer a second bottle needs the count
- * BEFORE the tap, and a tile that only speaks when the news is bad teaches nothing
- * about the shelf. It is quiet when it is healthy — a neutral pill, not a coloured
- * one — and it colours itself only when the number changes what somebody would do.
+ * A cashier deciding whether to promise the customer a second bottle needs
+ * the count BEFORE the tap. It is quiet text while it is healthy and colours
+ * itself only when the number changes what somebody would do — a pill for
+ * the alarms, plain secondary text for the everyday number. On a narrow
+ * image card the stock wraps under the price rather than eliding, because
+ * "Sto…" is not information.
  *
  * WHY IT SELLS AT ZERO, AND BELOW
  *
  * pos calls setEnabled(stock > 0). A disabled tile on a touchscreen is
- * indistinguishable from a frozen application — the operator taps, nothing happens,
- * and nothing explains why — and it also kills the tooltip, so the one place pos
- * writes "out of stock" is unreachable on the tile that needs it.
- *
- * More than that, refusing the tap was the WRONG RULE. `finalize_sale` lets stock go
- * negative on purpose (pos/app/data/db.py:1241-1243): a shop sells the case that is
- * still on the pallet, or the count is simply wrong, and the sale is real either
- * way. The tile stays live, full-contrast and tappable at any stock level; what
- * changes is the pill, which turns red and shows the negative it will create. The
- * count is the warning, not the barrier.
- *
- * WHERE `accent` COMES FROM
- *
- * pos lets a product carry a user-chosen colour and is the one place in that
- * codebase permitted to inline a stylesheet for it. It is passed in here rather
- * than derived, so the page is free to fall back to the category's hue when a
- * product has no colour of its own — which is what actually makes a wall of
- * tiles scannable, since almost nobody colours products one at a time.
+ * indistinguishable from a frozen application — the operator taps, nothing
+ * happens, and nothing explains why — and it also kills the tooltip, so the
+ * one place pos writes "out of stock" is unreachable on the tile that needs
+ * it. More than that, refusing the tap was the WRONG RULE:
+ * `finalize_sale` lets stock go negative on purpose (pos/app/data/db.py):
+ * a shop sells the case that is still on the pallet, or the count is simply
+ * wrong, and the sale is real either way. The tile stays live, full-contrast
+ * and tappable at any stock level; what changes is the stock text, which
+ * turns red and shows the negative it will create. The count is the warning,
+ * not the barrier.
  *
  * WHY AbstractButton AND NOT Button
  *
  * A tile needs the whole of a button's behaviour — hover, press, keyboard
- * activation, Accessible.name — and none of a button's appearance. Starting from
- * the styled Button would have meant replacing its background and contentItem,
- * which is how a control quietly opts out of the geometry the vendoring scaler
- * multiplied. AbstractButton ships with `background` and `contentItem` both
- * null, so everything below is additive: there is nothing here to override.
+ * activation, Accessible.name — and none of a button's appearance. Starting
+ * from the styled Button would have meant replacing its background and
+ * contentItem, which is how a control quietly opts out of the geometry the
+ * vendoring scaler multiplied. AbstractButton ships with `background` and
+ * `contentItem` both null, so everything below is additive.
  */
 QC.AbstractButton {
     id: tile
@@ -105,11 +97,12 @@ QC.AbstractButton {
     // API
     // =====================================================================
     property string name: ""
-    /* Money arrives already formatted. Every amount in this app is formatted by
-       pos's own fmt_money, which knows the currency, the decimal count and the
-       digit shapes for the active language; a second implementation in JS would
-       be a second set of rules for the same money. */
+    /* Money arrives already formatted. Every amount in this app is formatted
+       by pos's own fmt_money, which knows the currency, the decimal count and
+       the digit shapes for the active language; a second implementation in JS
+       would be a second set of rules for the same money. */
     property string priceText: ""
+
     property string barcode: ""
 
     /* The product's photo, as a URL. "" is a product without one, and so is a
@@ -117,44 +110,40 @@ QC.AbstractButton {
        there is nothing a card could usefully do differently about the second. */
     property string imageSource: ""
 
-    /* Does this card have a photo band at all? The GRID's answer, not the row's
-       — see the header. */
+    /* Does this card have a photo band at all? The GRID's answer, not the
+       row's — a GridView has one cellHeight, so per-row shapes would clip. */
     property bool showImage: false
 
     /* Is there a picture to draw in it? */
     readonly property bool hasImage: showImage && imageSource !== ""
 
-    /* Raw, because it decides the pill's tone. */
+    /* Raw, because it decides the stock text's tone. */
     property real stock: 0
     property string stockText: ""
     property bool lowStock: false
 
-    /* "transparent" means "no colour set" — a `color` property cannot be null,
-       and a zero alpha is the one value that can never be a real choice. */
+    /* "transparent" means "no colour set" — a `color` property cannot be
+       null, and a zero alpha is the one value that can never be a real
+       choice. */
     property color accent: "transparent"
     readonly property bool tinted: accent.a > 0
 
-    /* Room to keep clear at the trailing end of the NAME, for something the host
-       draws over the card's top corner.
-       The arrange screen puts a favourite star there. It fitted while that grid was
-       pinned to three columns and the tiles were 440px wide; the moment the grid
-       started flowing from `tileMin` like the till's, the star landed on top of the
-       product name. Nothing else on the face moves — the price row is at the bottom
-       and the corner is at the top. */
+    /* Room to keep clear at the trailing end of the NAME, for something the
+       host draws over the card's top corner — the arrange screen's favourite
+       star. */
     property int nameTrailingRoom: 0
 
     /* There is stock on the shelf. NOT "can be sold" — see the header. */
     readonly property bool inStock: stock > 0
     readonly property bool oversold: stock < 0
-    readonly property bool striped: tinted
 
     /*
-     * The stock pill's tone, and the whole of the tile's warning vocabulary.
+     * The stock's tone, and the whole of the tile's warning vocabulary.
      *
-     *   below zero   danger, and the pill shows the negative it already is
+     *   below zero   danger — the count is already negative
      *   at zero      danger — the next sale makes it negative
      *   low          warning
-     *   healthy      "" — a neutral pill, information rather than an alarm
+     *   healthy      "" — plain secondary text, information not alarm
      */
     readonly property string stockTone: (oversold || stock === 0) ? "danger"
                                       : lowStock ? "warning" : ""
@@ -163,22 +152,44 @@ QC.AbstractButton {
     // BEHAVIOUR
     // =====================================================================
     hoverEnabled: true
+    /* The card's height is its CONTENT's — never a token's guess at it:
+       the image card is two name lines and one money line between the
+       paddings (the words), and the photo matches whatever that is by
+       spanning the card's full height — the merchant's rule, "height of
+       image == height of card", with no strips of empty card above or
+       below the picture. The text tile keeps its own fixed token. */
     implicitWidth: showImage ? Tokens.size.tileMediaMin : Tokens.size.tileMin
-    implicitHeight: showImage ? Tokens.size.tileMedia : Tokens.size.tile
+    implicitHeight: showImage
+                    ? 2 * Tokens.spacing.sm + Tokens.size.tileName
+                      + textFaceMoneyHeight
+                    : Tokens.size.tile
+
+    /* The tap landed. A 400ms emerald pulse on the border, so a wall of taps
+       confirms each one without a dialog — the cart line flashing into
+       selection below does the rest. */
+    property bool added: false
+    onAddedChanged: if (added) addedTimer.restart()
+
+    Timer {
+        id: addedTimer
+        interval: 400
+        onTriggered: tile.added = false
+    }
 
     /* Padding is set here, once, rather than on each label — Control hands
        contentItem exactly the area between its paddings, so this is the single
        place the face's inset is decided.
-       It is also the one kind of geometry LayoutMirroring does NOT flip: anchors
-       and positioners mirror, padding does not. So the extra room the stripe
-       needs is placed by asking `mirrored`, which is the same property the style
-       itself uses and which accounts for the control's locale as well as an
-       ancestor's LayoutMirroring. */
-    readonly property int stripeRoom: striped ? 4 + Tokens.spacing.xs : 0
+
+       EQUAL ON ALL FOUR SIDES, by the merchant's own measure: the square and
+       its words hold the same distance from every border, so a wall of cards
+       reads as one grid whatever is in them. The product's colour stripe pays
+       for that — it used to buy itself extra clearance on the leading edge,
+       but the 3px stripe sits inside the border's radius inset and the
+       content starts 12px in, so it keeps its key without taxing the pad. */
     topPadding: Tokens.spacing.sm
     bottomPadding: Tokens.spacing.sm
-    leftPadding: Tokens.spacing.sm + (mirrored ? 0 : stripeRoom)
-    rightPadding: Tokens.spacing.sm + (mirrored ? stripeRoom : 0)
+    leftPadding: Tokens.spacing.sm
+    rightPadding: Tokens.spacing.sm
 
     Accessible.role: Accessible.Button
     Accessible.name: name
@@ -186,8 +197,8 @@ QC.AbstractButton {
         ? priceText
         : Strings.t("pos.tile.out_of_stock", "Out of stock")
 
-    /* Tooltip carries what will not fit on the face: the untruncated name, the
-       barcode, and the stock in words. Same three facts pos puts there. */
+    /* Tooltip carries what will not fit on the face: the untruncated name,
+       the barcode, and the stock in words. */
     QC.ToolTip.text: {
         var lines = [name]
         if (barcode !== "")
@@ -200,11 +211,9 @@ QC.AbstractButton {
     QC.ToolTip.visible: hovered && name !== ""
     QC.ToolTip.delay: 700
 
-    /* Press feedback. A transform, so it costs the compositor nothing, and on a
-       touchscreen it is the only confirmation that the tap landed — pos forbids
-       animation outright, but that was a Qt Widgets repaint-cost rule and it does
-       not apply to a scene graph. */
-    scale: down ? 0.97 : 1.0
+    /* Press feedback. A transform, so it costs the compositor nothing, and on
+       a touchscreen it is the only confirmation that the tap landed. */
+    scale: down ? 0.98 : 1.0
     Behavior on scale {
         NumberAnimation { duration: Fluent.anim.speed; easing.type: Easing.OutQuint }
     }
@@ -215,50 +224,48 @@ QC.AbstractButton {
     background: Rectangle {
         radius: Tokens.radius.md
 
-        /* No dead-grey state. A tile at zero stock is still a live, tappable
-           product — the stock pill is what says so, and greying the surface was
-           the visual half of a refusal this tile no longer makes. */
-        color: {
-            if (tile.tinted) {
-                /* The product's own colour at a tenth strength — enough to sort
-                   a grid by eye, faint enough that text on top still clears
-                   contrast. pos uses tint(color, 0.85) for the same purpose. */
-                return Qt.tint(Fluent.cardBackground,
-                               Qt.rgba(tile.accent.r, tile.accent.g, tile.accent.b,
-                                       tile.down ? 0.22 : tile.hovered ? 0.16 : 0.10))
-            }
-            return tile.down ? Fluent.subtleTertiary
-                 : tile.hovered ? Fluent.subtleSecondary
-                                : Fluent.cardBackground
-        }
+        /* Neutral card. No dead-grey state for zero stock — the tile stays a
+           live, tappable product, and the stock text is what says so. Hover
+           is the subtle fill; the resting card is plain white against the
+           workspace canvas, which is what makes 60 of them read as a wall
+           rather than as 60 outlined boxes. */
+        color: tile.down ? Fluent.subtleTertiary
+             : tile.hovered ? Fluent.subtleSecondary
+                            : Tokens.workspace.surface
 
         border.width: 1
-        /* Oversold is worth a border, not just a pill: at a glance across a wall
-           of tiles the outline is what carries, and a product already below zero
-           is the one thing on this screen somebody may want to stop and check. */
-        border.color: tile.oversold
-            ? Qt.rgba(Tokens.danger.r, Tokens.danger.g, Tokens.danger.b, 0.55)
-            : tile.tinted
-              ? Qt.rgba(tile.accent.r, tile.accent.g, tile.accent.b, 0.45)
-              : Fluent.dividerBorder
+        /* The boundary carries the tile's states. Resting is the quiet
+           structural border; hover strengthens it (a boundary, not just a
+           wash, so the card the pointer is over is unmistakable); the
+           400ms emerald flash confirms a tap; and the oversold outline is
+           worth keeping from the old design — across a wall of tiles it is
+           what carries, and a product already below zero is the one thing
+           on this screen somebody may want to stop and check. */
+        border.color: tile.added ? Tokens.brand
+                  : tile.oversold
+                      ? Qt.rgba(Tokens.danger.r, Tokens.danger.g,
+                                Tokens.danger.b, 0.55)
+                  : tile.hovered ? Fluent.controlBorderStrong
+                                 : Tokens.workspace.border
 
-        /* Leading-edge stripe in the product's colour. Anchors flip under
-           LayoutMirroring, so this is the leading edge in Arabic too.
+        Behavior on border.color {
+            ColorAnimation { duration: Fluent.anim.fast }
+        }
 
-           Inset top and bottom by the card's own radius: the stripe is a
-           square-cornered child of a rounded parent, and a rounded Rectangle
-           clips to its bounding box rather than its arcs, so a full-height
-           stripe would show a small nub outside each corner. Starting where the
-           straight edge starts avoids the problem geometrically. */
+        /* Leading-edge stripe in the product's colour — the merchant's sort
+           key, three pixels wide. Inset top and bottom by the card's own
+           radius: a rounded Rectangle clips to its bounding box rather than
+           its arcs, so a full-height stripe would show a nub outside each
+           corner. */
         Rectangle {
             anchors.left: parent.left
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             anchors.topMargin: Tokens.radius.md
             anchors.bottomMargin: Tokens.radius.md
-            width: 4
+            width: 3
             radius: 2
-            visible: tile.striped
+            visible: tile.tinted
             color: tile.accent
         }
 
@@ -266,10 +273,11 @@ QC.AbstractButton {
         // supply a focus ring.
         Rectangle {
             anchors.fill: parent
-            radius: parent.radius
+            anchors.margins: -2
+            radius: parent.radius + 2
             color: "transparent"
             border.width: 2
-            border.color: Fluent.accent
+            border.color: Tokens.brand
             visible: tile.visualFocus
         }
     }
@@ -277,168 +285,253 @@ QC.AbstractButton {
     // =====================================================================
     // FACE
     // =====================================================================
-    /* Anchored rather than stacked in a Column. The two rows have fixed
-       relationships to the tile's edges — name to the top, price to the bottom —
-       and the slack belongs in the middle, where a name that runs to one line
-       instead of two should leave it. A Column would have to sum to exactly the
-       tile height to look right at every name length. */
+    /* Two faces, one visible: the horizontal image card and the text-first
+       tile. The grid's `showImage` decides which — never the row, because
+       a GridView has one cell size and a wall of mixed heights is a wall of
+       clipped cards. Both faces fill the contentItem; the hidden one is
+       simply not painted.
+
+       THE MONEY BLOCK'S HEIGHT, shared by the card's height budget: one
+       price line and the stock pill that may wrap under it on a narrow
+       card — measured from the tokens, not from a laid-out child, so the
+       card's implicit height is knowable before anything is instantiated. */
+    readonly property int textFaceMoneyHeight:
+        Math.round(Tokens.font.tilePrice * 1.35)
+        + (Tokens.spacing.xs + Math.round(Tokens.font.caption * 1.4))
+
     contentItem: Item {
 
-        /*
-         * The photo band.
-         *
-         * Anchored to the top and given a height of zero when there is no band,
-         * so the name below it can anchor to `media.bottom` unconditionally —
-         * with no band, that IS the top of the face. One anchor, two shapes.
-         *
-         * SQUARE CORNERS, ON PURPOSE. A rounded Rectangle in Qt Quick clips its
-         * children to its bounding box and not to its arcs, so an Image inside a
-         * radius-6 frame paints over all four corners and the rounding is a lie
-         * that only shows at the edges. There is no cheap rounded clip to reach
-         * for — the alternative is a render layer and an OpacityMask per visible
-         * card, on a screen that scrolls forty of them — so the band is a framed
-         * photograph rather than a rounded one, and the frame is what makes that
-         * read as deliberate. The card around it keeps its radius: nothing
-         * overpaints ITS corners.
-         */
+        // -- the image card ------------------------------------------------
+        /* The photo is the card's own height, edge to edge: the square is
+           anchored top and bottom to the CARD (not inset by the padding —
+           that padding belongs to the words' column), so there is no empty
+           strip above or below the picture. The words beside it are
+           vertically CENTRED — the merchant's rule — rather than pushed to
+           the edges of their column. */
         Item {
-            id: media
+            id: square
+
             anchors.left: parent.left
-            anchors.right: parent.right
             anchors.top: parent.top
-            height: tile.showImage ? Tokens.size.tileImage : 0
+            anchors.bottom: parent.bottom
+            width: height
             visible: tile.showImage
 
+            /* An edge-to-edge plate, not a framed thumbnail: the photo runs
+               into the card's very edges, which is what "height of image ==
+               height of card" looks like — no border to eat a pixel row, no
+               radius to lift a corner, no inset. */
             Rectangle {
-                id: frame
+                id: photoFrame
+
                 anchors.fill: parent
+                radius: 0
                 clip: true
 
-                /* The ground under the picture, and the whole of the placeholder:
-                   the category's colour at a low strength, or a neutral step off
-                   the card when a product has no category to borrow from. Also
-                   what is on screen for the frame or two an asynchronous decode
-                   takes, which is why it is a colour and not white. */
+                /* A product WITH a photo gets the merchant's colour as the
+                   plate's ground at low strength — the photo covers it, so
+                   it is the plate that colour reads on. */
                 color: tile.tinted
-                       ? Qt.rgba(tile.accent.r, tile.accent.g, tile.accent.b, 0.14)
+                       ? Qt.rgba(tile.accent.r, tile.accent.g, tile.accent.b, 0.10)
                        : Fluent.subtleTertiary
-                border.width: 1
-                border.color: tile.tinted
-                              ? Qt.rgba(tile.accent.r, tile.accent.g,
-                                        tile.accent.b, 0.35)
-                              : Fluent.dividerBorder
-
-                Icon {
-                    anchors.centerIn: parent
-                    visible: !tile.hasImage
-                    icon: "ic_fluent_image_off_20_regular"
-                    size: Tokens.icon.lg
-                    color: tile.tinted ? tile.accent : Fluent.textTertiary
-                    opacity: 0.45
-                }
+                border.width: 0
 
                 Image {
                     anchors.fill: parent
                     visible: tile.hasImage
                     source: tile.hasImage ? tile.imageSource : ""
-                    /* Fill the band and crop the overflow: a letterboxed photo
-                       leaves two grey bars on every card and turns a wall of
-                       products into a wall of frames. */
+                    /* Aspect-fill and crop the overflow: a letterboxed photo
+                       leaves grey bars on every card, and a stretched one
+                       distorts the product. */
                     fillMode: Image.PreserveAspectCrop
                     /* Never on the GUI thread: a till that stutters while it
-                       reads forty files off a disk is a till that misses taps. */
+                       reads forty files off a disk is a till that misses
+                       taps. */
                     asynchronous: true
-                    /* Decoded at twice the card's width and no more. Stored photos
-                       are capped at 640px, and a full-size decode per visible card
-                       is tens of megabytes for pixels no screen shows. Only one
-                       dimension is set — the other follows the aspect ratio, which
-                       is what PreserveAspectCrop needs to crop rather than
-                       stretch. */
-                    sourceSize.width: 2 * Tokens.size.tileMediaMin
+                    /* Decoded at twice the square and no more. */
+                    sourceSize.width: 2 * Tokens.size.tileImage
                     mipmap: true
                 }
-            }
-        }
 
-        Text {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            /* Mirrors with the anchor: under LayoutMirroring `right` becomes `left`
-               and the margin travels with it, so the cleared corner is the trailing
-               one in Arabic too. */
-            anchors.rightMargin: tile.nameTrailingRoom
-            anchors.top: media.bottom
-            anchors.topMargin: tile.showImage ? Tokens.spacing.sm : 0
-            height: Tokens.size.tileName
-
-            text: tile.name
-            font.pixelSize: Tokens.font.tileName
-            font.weight: Font.DemiBold
-            color: Fluent.textPrimary
-            wrapMode: Text.Wrap
-            maximumLineCount: 2
-            elide: Text.ElideRight
-            /* Logical alignment: mirrors to AlignRight in Arabic. Pinned rather
-               than left to default because a Text with no explicit alignment
-               follows its OWN content's direction, which would put a
-               French-named product on the wrong edge of an Arabic screen. */
-            horizontalAlignment: Text.AlignLeft
-            verticalAlignment: Text.AlignTop
-        }
-
-        /* A Layout, so the pill claims its width and the price takes the rest,
-           and so the pair swaps sides in Arabic without either of them being
-           told to. */
-        RowLayout {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            spacing: Tokens.spacing.xs
-
-            Text {
-                Layout.fillWidth: true
-                text: tile.priceText
-                font.pixelSize: Tokens.font.tilePrice
-                font.weight: Font.DemiBold
-                /* Tabular figures: a wall of prices in one column is only
-                   comparable if the digits are one width. */
-                font.features: Tokens.figures
-                color: Fluent.textPrimary
-                elide: Text.ElideRight
-                horizontalAlignment: Text.AlignLeft
-            }
-
-            /* The stock, on every tile. Neutral while it is healthy, coloured when
-               the number changes what somebody would do — see the header. */
-            Rectangle {
-                id: stockPill
-                Layout.alignment: Qt.AlignVCenter
-
-                readonly property bool alarmed: tile.stockTone !== ""
-
-                implicitWidth: stockLabel.implicitWidth + Tokens.spacing.sm
-                implicitHeight: stockLabel.implicitHeight + Tokens.spacing.xs
-                radius: Tokens.radius.pill
-                color: alarmed ? Tokens.toneFill(tile.stockTone)
-                               : Fluent.subtleTertiary
-
-                Text {
-                    id: stockLabel
+                /* The placeholder: a quiet package glyph on the same neutral
+                   ground. Not an error symbol, not a pastel wash — a product
+                   with no photo is ordinary, and the square it would have
+                   occupied is part of the grid's rhythm. */
+                Icon {
                     anchors.centerIn: parent
-                    /* The number itself, always — including a negative one. This
-                       used to print a hardcoded "0" whenever stock was not
-                       positive, so a product already at −3 reported zero and the
-                       oversell was invisible on the one surface that could have
-                       shown it. */
-                    text: "\u200e" + (tile.stockText !== ""
-                                      ? tile.stockText : String(tile.stock))
-                    font.pixelSize: Tokens.font.caption
-                    font.weight: Font.DemiBold
-                    font.features: Tokens.figures
-                    color: stockPill.alarmed ? Tokens.toneInk(tile.stockTone)
-                                             : Fluent.textSecondary
+                    visible: !tile.hasImage
+                    icon: "ic_fluent_box_20_regular"
+                    size: Tokens.icon.md
+                    color: Fluent.textTertiary
                 }
             }
+        }
+
+        /* The words, to the trailing side of the square, vertically
+           CENTRED: name and money as one block with air above and below,
+           rather than a name pinned to the top of the card and a price
+           pinned to the bottom of it. The block reads as one thing beside
+           its picture. */
+        ColumnLayout {
+            id: words
+
+            anchors.left: square.right
+            anchors.leftMargin: tile.showImage ? Tokens.spacing.sm : 0
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            visible: tile.showImage
+            spacing: Tokens.spacing.xs
+
+            /* The name, in a fixed two-line band: two lines of
+               font.tileName is what the card's height was budgeted for,
+               and a name that needs more than two lines ellipsises into
+               the tooltip rather than eating the money block's room. */
+            Text {
+                Layout.fillWidth: true
+
+                text: tile.name
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.tileName
+                font.weight: Font.DemiBold
+                color: Fluent.textPrimary
+                wrapMode: Text.Wrap
+                maximumLineCount: 2
+                elide: Text.ElideRight
+                /* Logical alignment: mirrors to AlignRight in Arabic. Pinned
+                   rather than left to default because a Text with no explicit
+                   alignment follows its OWN content's direction, which would
+                   put a French-named product on the wrong edge of an Arabic
+                   screen. */
+                horizontalAlignment: Text.AlignLeft
+                verticalAlignment: Text.AlignTop
+            }
+
+            /* Price and stock. A Flow, not a Row: a wide card carries
+               "1,017.13   Stock 70" on one line; a narrow one wraps the
+               stock under the price automatically, which reads and stays
+               labelled — the alternative was an ellipsis eating the count. */
+            Flow {
+                Layout.fillWidth: true
+
+                spacing: Tokens.spacing.xs
+
+                Text {
+                    width: Math.min(implicitWidth, parent.width)
+                    text: tile.priceText
+                    font.pixelSize: Tokens.font.tilePrice
+                    font.weight: Font.DemiBold
+                    /* Tabular figures: a wall of prices in one column is only
+                       comparable if the digits are one width. */
+                    font.family: Tokens.font.family
+                    font.features: Tokens.figures
+                    color: Fluent.textPrimary
+                    elide: Text.ElideRight
+                    horizontalAlignment: Text.AlignLeft
+                }
+
+                StockPill { }
+            }
+        }
+
+        // -- the text tile -------------------------------------------------
+        /* The no-photo face: the compact card the wall has always had. Name
+           to the top, price and stock to the bottom, slack in the middle
+           where a one-line name should leave it. */
+        Item {
+            id: textFace
+
+            anchors.fill: parent
+            visible: !tile.showImage
+
+            Text {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                /* Mirrors with the anchor: under LayoutMirroring `right` becomes
+                   `left` and the margin travels with it, so the cleared corner is
+                   the trailing one in Arabic too. */
+                anchors.rightMargin: tile.nameTrailingRoom
+                anchors.top: parent.top
+                height: Tokens.size.tileName
+
+                text: tile.name
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.tileName
+                font.weight: Font.DemiBold
+                color: Fluent.textPrimary
+                wrapMode: Text.Wrap
+                maximumLineCount: 2
+                elide: Text.ElideRight
+                horizontalAlignment: Text.AlignLeft
+                verticalAlignment: Text.AlignTop
+            }
+
+            /* A Layout, so the stock claims its width and the price takes the
+               rest, and so the pair swaps sides in Arabic without either of
+               them being told to. */
+            RowLayout {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                spacing: Tokens.spacing.sm
+
+                Text {
+                    Layout.fillWidth: true
+                    text: tile.priceText
+                    font.pixelSize: Tokens.font.tilePrice
+                    font.weight: Font.DemiBold
+                    font.family: Tokens.font.family
+                    font.features: Tokens.figures
+                    color: Fluent.textPrimary
+                    elide: Text.ElideRight
+                    horizontalAlignment: Text.AlignLeft
+                }
+
+                StockPill { }
+            }
+        }
+    }
+
+    /*
+     * The stock, on every tile, and labelled: "Stock 24" rather than an
+     * unexplained 24 — the number is only information once it says what it
+     * counts. Plain secondary text while healthy — a labelled number on two
+     * hundred tiles as a row of pills is noise — and a small tinted pill only
+     * when the number is the news, with words in the pill rather than colour
+     * alone.
+     *
+     * Declared once as a component and instantiated in both faces, because
+     * the two faces are two shapes of the same card, not two cards.
+     */
+    component StockPill: Rectangle {
+        id: stockPill
+
+        readonly property bool alarmed: tile.stockTone !== ""
+
+        width: stockLabel.implicitWidth + (alarmed ? Tokens.spacing.sm : 0)
+        height: stockLabel.implicitHeight + (alarmed ? 2 : 0)
+        radius: Tokens.radius.sm
+        color: alarmed ? Tokens.toneFill(tile.stockTone) : "transparent"
+
+        Text {
+            id: stockLabel
+            anchors.centerIn: parent
+            /* Alarmed states say the situation in words; the healthy state
+               says the count with its label. The number is always the real
+               one — a product already at −3 must report −3, not zero. */
+            text: tile.oversold
+                  ? "\u200e" + (tile.stockText !== ""
+                                ? tile.stockText : String(tile.stock))
+                  : tile.stock === 0
+                      ? Strings.t("pos.tile.out_of_stock", "Out of stock")
+                      : Strings.t("pos.tile.stock", "Stock")
+                        + " \u200e" + (tile.stockText !== ""
+                                       ? tile.stockText : String(tile.stock))
+            font.family: Tokens.font.family
+            font.pixelSize: Tokens.font.caption
+            font.weight: stockPill.alarmed ? Font.DemiBold : Font.Normal
+            font.features: Tokens.figures
+            color: stockPill.alarmed ? Tokens.toneInk(tile.stockTone)
+                                     : Fluent.textSecondary
         }
     }
 }

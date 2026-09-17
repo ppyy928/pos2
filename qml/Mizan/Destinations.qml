@@ -73,7 +73,13 @@ QtObject {
             page: "pages/PaymentsPage.qml", section: "money"
         },
         {
-            key: "cash", titleKey: "nav.cash", title: "Cash",
+            /* "Finances", though the page it opens is still titled Cash: the
+               rail's slot is 224px wide against a 17px label and the entry has
+               to read at a glance, and the one word covers the ledger and the
+               expenses it holds. `titleKey` stays "nav.cash" — no catalogue
+               entry exists for it, so this title IS the rail's label, and the
+               page keeps its own fallback. */
+            key: "cash", titleKey: "nav.cash", title: "Finances",
             icon: "ic_fluent_money_hand_20_regular",
             page: "pages/CashPage.qml", section: "money"
         },
@@ -101,11 +107,13 @@ QtObject {
 
     // Section captions, shown only while the rail is expanded. "" is the
     // ungrouped head of the list (Dashboard + POS) and never draws a caption.
+    // The values are i18n KEYS, not labels: NavRail reads them through
+    // Strings.t, so the captions follow the language like the rows do.
     readonly property var sectionTitles: ({
-        "sell":   "SELL",
-        "stock":  "STOCK",
-        "money":  "MONEY",
-        "manage": "MANAGE"
+        "sell":   "nav.section.sell",
+        "stock":  "nav.section.stock",
+        "money":  "nav.section.money",
+        "manage": "nav.section.manage"
     })
 
     readonly property string defaultKey: "pos"

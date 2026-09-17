@@ -8,9 +8,10 @@ import Mizan
  * The till's entry readout. Ported from
  * pos/app/widgets/keypad_display.py::KeypadDisplay.
  *
- *     ┌────────────────────────────────────────────────┐
- *     │ 6133273401234                      # QTY       │
- *     └────────────────────────────────────────────────┘
+ *     ┌──────────────────────────────────────────────┐
+ *     │  6133                                  [ ➜ ] │
+ *     │  Coca-Cola 1.5L                               │
+ *     └──────────────────────────────────────────────┘
  *
  * A readout, not a field: it takes no focus and holds no state. The page owns
  * the buffer — every digit, whether it came from the on-screen numpad, a
@@ -21,16 +22,42 @@ import Mizan
  *
  * WHY THE VALUE IS TEXT AND NOT A NUMBER
  *
- * It is shown exactly as typed, leading zeros and all, because half of what is
- * typed here is a barcode. Formatting "0612" as 612 would make a scan
- * unrecognisable to the person holding the product.
+ * It is shown exactly as typed, leading zeros and all. Formatting "0612" as 612
+ * would make the number a different number; the readout's job is to show the
+ * entry, not to interpret it.
  *
- * WHY THE BADGE IS THE PAGE'S WORDS
+ * WHY THERE IS NO MODE PILL
  *
- * The mode vocabulary — its label, its glyph and its tone — belongs to Numpad,
- * which owns the buttons that switch it. This shows what it is given rather than
- * looking anything up, so the keypad and the readout cannot end up disagreeing
- * about what "+ AMT" is called or what colour it is.
+ * The entry's mode is the lit key on the pad itself — the highlighted mode
+ * button with its tone ink is one glance down-right away, and a pill here
+ * would only repeat that answer in a second place the two could disagree.
+ * The readout shows the number; the pad says what the number is.
+ *
+ * WHY THE TARGET LINE IS GONE
+ *
+ * There used to be a second line under the figure naming the cart line the
+ * number would change. It was the answer to a real question — "which thing
+ * will this number change" — but the cart itself is the answer: the selected
+ * row is already lit, and the readout repeating its name put a caption under
+ * the biggest figure on the screen and made the number itself smaller to pay
+ * for it. The strip is one line of figure and the commit key, and the space
+ * the caption held belongs to the number.
+ *
+ * WHY SUBMIT IS AN ICON
+ *
+ * It was the fourth key of the numpad's side column once, and then a tick at
+ * this strip's trailing end beside the word "Apply". A tick reads as "done",
+ * and "Apply" reads as a settings verb; what this key does is commit the typed
+ * quantity to the selected line. So: an enter-arrow alone — the shape a
+ * keyboard's Enter key already means, needing no word beside it — always in
+ * the one emerald, beside the number it commits, where the eye already is
+ * after typing. The tooltip and the accessible name say the whole act,
+ * "Submit quantity", so the key explains itself on hover and to a screen
+ * reader without spending the strip's width on a label.
+ *
+ * `actionVisible: false` for a readout with nothing to commit. The payment
+ * calculator is that case — it works out change and commits nothing, so a
+ * submit key there was a control that did literally nothing when pressed.
  */
 Rectangle {
     id: display
@@ -46,27 +73,15 @@ Rectangle {
        choice explicitly, having tried the placeholder. */
     property string placeholder: "0"
 
-    /* What the next Apply will do, in the page's own words. */
-    property string modeText: ""
-    property string modeGlyph: ""
-    property string tone: ""
-
     /*
-     * APPLY LIVES HERE NOW, NOT ON THE PAD.
-     *
-     * It was the fourth key of the numpad's side column — under "# Qty", "+ Amount",
-     * "− Discount" — which put the confirm action inside the grid of things being
-     * confirmed, and cost a whole 72px key to say what a tick says. It is a filled
-     * icon at the trailing end of this strip instead: beside the number it applies,
-     * where the eye already is after typing, and where the mode pill has been saying
-     * what it will do all along.
-     *
-     * `actionVisible: false` for a readout with nothing to apply. The payment
-     * calculator is that case — it commits nothing, so a tick there was a control that
-     * did literally nothing when pressed (it emitted `applied()` and nobody was
-     * listening), and the mode pill beside it named a mode that does not exist. Both
-     * are gone there: `modeText` is already conditional, and this makes the button so.
+     * The commit control's own words. The default comes from the catalogue so
+     * the page does not have to pass it; the property exists so a future
+     * readout could commit something else.
      */
+    property string actionTooltip: Strings.t("pos.numpad.submit.qty",
+                                             "Submit quantity")
+
+    /* `actionVisible: false` for a readout with nothing to apply. */
     property bool actionVisible: true
     property bool actionEnabled: true
     signal applied()
@@ -74,27 +89,26 @@ Rectangle {
     // =====================================================================
     // SURFACE
     // =====================================================================
-    implicitHeight: Tokens.size.command
+    /* One line — the figure — plus the commit key: 64 holds the figure at the
+       size a number read at speed wants, with the key centred against it.
+       Fixed, so the keypad region below never shifts. */
+    implicitHeight: 64
     radius: Tokens.radius.md
     color: Fluent.subtleSecondary
     border.width: 1
-    border.color: display.tone !== "" ? Tokens.toneInk(display.tone)
-                                      : Fluent.dividerBorder
-
-    /* The border is the only thing that carries the tone across the whole strip,
-       so it is worth animating: the mode changes under the operator's thumb and
-       a hard switch reads as a flicker. */
-    Behavior on border.color { ColorAnimation { duration: Fluent.anim.appearance } }
+    border.color: Fluent.dividerBorder
 
     // =====================================================================
     // CONTENT
     // =====================================================================
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: Tokens.spacing.md
+        anchors.leftMargin: Tokens.spacing.sm
         anchors.rightMargin: Tokens.spacing.xs
         spacing: Tokens.spacing.sm
 
+        /* The number, the most prominent thing in the bar, and the only
+            thing in it besides the commit key. */
         Text {
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignVCenter
@@ -102,8 +116,9 @@ Rectangle {
             /* U+200E LEFT-TO-RIGHT MARK, for the same reason DataTable prefixes
                it to a barcode column: a run of digits inside an Arabic paragraph
                is resolved against the paragraph direction and comes out
-               reversed. A scan that reads backwards is worse than useless — the
-               cashier cannot tell whether the scanner or the code is wrong. */
+               reversed. A typed entry that reads backwards is worse than
+               useless — the operator cannot tell whether they or the entry
+               are wrong. */
             text: "\u200e" + (display.text !== "" ? display.text : display.placeholder)
 
             font.family: Tokens.font.family
@@ -120,93 +135,69 @@ Rectangle {
             horizontalAlignment: Text.AlignLeft
         }
 
-        /* The active mode, as a tone pill. Same shape as the stock pill on a
-           tile, so "a small coloured pill" means the same thing on both halves
-           of this screen. */
-        Rectangle {
-            Layout.alignment: Qt.AlignVCenter
-            visible: display.modeText !== ""
-            implicitWidth: badge.implicitWidth + 2 * Tokens.spacing.sm
-            implicitHeight: badge.implicitHeight + Tokens.spacing.xs
-            radius: Tokens.radius.pill
-            color: Tokens.toneFill(display.tone)
-
-            Row {
-                id: badge
-                anchors.centerIn: parent
-                spacing: Tokens.spacing.xs
-
-                Icon {
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: display.modeGlyph !== ""
-                    icon: display.modeGlyph
-                    size: Tokens.icon.sm
-                    color: Tokens.toneInk(display.tone)
-                }
-
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: display.modeText
-                    font.family: Tokens.font.family
-                    font.pixelSize: Tokens.font.caption
-                    font.weight: Font.DemiBold
-                    color: Tokens.toneInk(display.tone)
-                }
-            }
-        }
-
         /*
-         * Apply, as a filled icon.
-         *
-         * Coloured by the MODE, not fixed: the pill beside it already carries that
-         * tone, so the button that acts on it carries the same one — pressing a green
-         * tick while the strip says "Received" in green is one statement, and pressing
-         * a blue one would be two.
+         * Submit, the enter-arrow alone in the one emerald.
          *
          * Built from a Rectangle and a MouseArea rather than a styled Button, the way
          * the library builds its own controls: a styled Button would bring its own
          * implicit size and padding into a 56px strip that has exactly 48 to give.
+         *
+         * The arrow is the ENTER-arrow shape — an arrow committing into its
+         * mark — and it flips with the language: in Arabic the row mirrors,
+         * the key sits at the reading-start edge, and the arrow must point
+         * the way the reading goes.
          */
         Rectangle {
-            id: applyButton
+            id: submitButton
 
             Layout.alignment: Qt.AlignVCenter
             visible: display.actionVisible
-            implicitWidth: Tokens.size.control
-            implicitHeight: Tokens.size.control
+            implicitWidth: 48
+            implicitHeight: 48
             radius: Tokens.radius.sm
 
-            readonly property color hue: display.tone !== ""
-                                         ? Tokens.toneInk(display.tone) : Tokens.brand
-
-            color: !display.actionEnabled ? Fluent.subtleTertiary
-                 : applyArea.pressed ? Qt.darker(hue, 1.18)
-                 : applyArea.containsMouse ? Qt.lighter(hue, 1.08)
-                                           : hue
+            color: !display.actionEnabled ? Tokens.disabledFill
+                 : submitArea.pressed ? Tokens.brandPressed
+                 : submitArea.containsMouse ? Tokens.brandHover
+                 : Tokens.brand
 
             Behavior on color { ColorAnimation { duration: Fluent.anim.fast } }
 
             Icon {
+                id: submitGlyph
                 anchors.centerIn: parent
-                icon: "ic_fluent_checkmark_20_filled"
+                icon: "ic_fluent_arrow_enter_20_regular"
                 size: Tokens.icon.md
                 /* onBrand rather than the theme's own foreground: this sits on a
                    saturated fill in both themes, and Tokens keeps the pair. */
-                color: display.actionEnabled ? Tokens.onBrand : Fluent.textTertiary
+                color: display.actionEnabled ? Tokens.onBrand : Fluent.textDisabled
+                /* Point the way the reading goes: mirrored with the row in
+                   Arabic. An arrow that keeps pointing right on a
+                   right-to-left screen points backwards. */
+                transform: Scale {
+                    origin.x: submitGlyph.width / 2
+                    origin.y: submitGlyph.height / 2
+                    xScale: Strings.rtl ? -1 : 1
+                }
             }
 
             MouseArea {
-                id: applyArea
+                id: submitArea
                 anchors.fill: parent
                 hoverEnabled: true
-                enabled: display.actionEnabled
+                /* The tooltip says the act even while the key is disabled —
+                   that is exactly when the question "what would this do" is
+                   asked. */
                 cursorShape: Qt.PointingHandCursor
-                onClicked: display.applied()
+                onClicked: if (display.actionEnabled) display.applied()
             }
 
-            QC.ToolTip.text: Strings.t("pos.numpad.apply", "Apply")
-            QC.ToolTip.visible: applyArea.containsMouse
+            QC.ToolTip.text: display.actionTooltip
+            QC.ToolTip.visible: submitArea.containsMouse && display.actionVisible
             QC.ToolTip.delay: 500
+
+            Accessible.role: Accessible.Button
+            Accessible.name: display.actionTooltip
         }
     }
 }

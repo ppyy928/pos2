@@ -3,21 +3,27 @@ import QtQuick.Controls as QC
 import QtQuick.Layouts
 import QtQuick.Window
 import FluentControls
+import Mizan
 
 /*
  * The permanent navigation rail.
  *
  * Why permanent, when pos's own rules ban a permanent sidebar: that rule
  * existed because a fixed 240px sidebar ate a fifth of a 1366px screen. The
- * Fluent answer is the compact rail — 68px of icons that expands to 300px on
- * demand — which keeps the horizontal budget the rule was protecting while
- * adopting the shell idiom the product is now built on. Collapsed is the
- * default below 1200px of window width.
+ * Fluent answer is the compact rail — 68px of icons that expands on demand —
+ * which keeps the horizontal budget the rule was protecting while adopting
+ * the shell idiom the product is built on. Collapsed is the default below
+ * 1200px of window width.
  *
- * The rail is dark in both themes. That is deliberate: it anchors the layout
- * and lets the coloured content sit against something quiet. Everything on it
- * therefore inks from Tokens.onChrome* and Tokens.chromeHue*, never from the
- * theme-switched palette.
+ * DARK NAVY, IN BOTH THEMES
+ *
+ * The merchant's first rule: the rail must be distinguishable from the
+ * workspace at a glance. A quiet light rail one step off the page was tried
+ * and read as the page — three neighbouring surfaces of nearly equal weight,
+ * with a hairline doing the separating. The rail is now the navy family in
+ * Tokens.navy: fixed dark whichever theme the pages wear, so navigation is a
+ * region and not a column on a form. Active state is never colour alone:
+ * the checked row carries a fill AND a leading marker AND weight.
  */
 Rectangle {
     id: rail
@@ -28,7 +34,8 @@ Rectangle {
     /* key -> count, e.g. {"products": 4} for low stock. Absent keys show none. */
     property var badges: ({})
     /* Below this window width the rail collapses itself. pos's minimum window
-       is 1280 wide, so at minimum size the rail is still expanded. */
+       is 1180 wide, so at minimum size the rail is collapsed and the selling
+       screen keeps its width. */
     property int autoCollapseBelow: 1200
 
     signal activated(string key)
@@ -49,10 +56,7 @@ Rectangle {
             collapsed = true
     }
 
-    gradient: Gradient {
-        GradientStop { position: 0.0; color: Tokens.chromeFrom }
-        GradientStop { position: 1.0; color: Tokens.chromeTo }
-    }
+    color: Tokens.navy.base
 
     Behavior on implicitWidth {
         NumberAnimation {
@@ -61,14 +65,16 @@ Rectangle {
         }
     }
 
-    /* Trailing hairline. Anchors flip under LayoutMirroring, so this stays on
-       the content side in RTL. */
+    /* Trailing edge — the content side of the rail, flipped in RTL by
+       LayoutMirroring like any anchor. A near-black line against navy: the
+       rail separates by surface first, and this edge is the crisp finish on
+       that separation rather than the thing carrying it. */
     Rectangle {
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         width: 1
-        color: Tokens.chromeBorder
+        color: Tokens.navy.border
     }
 
     /* Section caption: the label when expanded, a hairline when collapsed, so
@@ -89,7 +95,7 @@ Rectangle {
             font.pixelSize: Tokens.font.overline
             font.weight: Font.DemiBold
             font.letterSpacing: 1.2
-            color: Tokens.onChromeMuted
+            color: Tokens.navy.caption
             opacity: rail.collapsed ? 0 : 1
             Behavior on opacity { NumberAnimation { duration: Fluent.anim.appearance } }
         }
@@ -98,15 +104,19 @@ Rectangle {
             anchors.centerIn: parent
             width: Tokens.icon.md
             height: 1
-            color: Tokens.chromeBorder
+            color: Tokens.navy.border
             opacity: rail.collapsed ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: Fluent.anim.appearance } }
         }
     }
 
     /* Each row carries the caption that precedes it, if it opens a section.
-       Simpler than a two-kinds-of-row model and it keeps caption and first
-       item in one delegate, so they can never be separated by the layout. */
+        Simpler than a two-kinds-of-row model and it keeps caption and first
+        item in one delegate, so they can never be separated by the layout.
+
+        The caption goes through Strings.t — inside this binding, so the read of
+        `strings.map` is captured and the captions re-resolve on a language
+        change like everything else on the rail. */
     readonly property var rows: {
         var out = []
         var items = Destinations.mainItems()
@@ -117,7 +127,7 @@ Rectangle {
             if (d.section !== last) {
                 last = d.section
                 if (d.section !== "")
-                    caption = Destinations.sectionTitles[d.section] || ""
+                    caption = Strings.t(Destinations.sectionTitles[d.section] || "")
             }
             out.push({ destination: d, caption: caption })
         }
@@ -135,12 +145,23 @@ Rectangle {
             Layout.fillWidth: true
             implicitHeight: Tokens.size.command
 
+            /* The rail's own ink and fills: light on navy, so the toggle
+               reads as chrome of this panel and not of the pages beside it. */
             ChromeButton {
                 anchors.left: parent.left
                 anchors.leftMargin: Tokens.spacing.xs
                 anchors.verticalCenter: parent.verticalCenter
                 iconName: "ic_fluent_navigation_20_regular"
-                tip: rail.collapsed ? qsTr("Expand menu") : qsTr("Collapse menu")
+                iconColor: Tokens.navy.muted
+                iconColorActive: Tokens.navy.text
+                fillHover: Tokens.navy.hover
+                fillDown: Tokens.navy.active
+                /* Strings.t, not qsTr: nothing installs a QTranslator in this
+                   app, so qsTr would show its argument verbatim in every
+                   language. Same rule Strings.qml's own header states. */
+                tip: rail.collapsed
+                      ? Strings.t("nav.expand", "Expand menu")
+                      : Strings.t("nav.collapse", "Collapse menu")
                 onClicked: rail.collapsed = !rail.collapsed
             }
         }
@@ -206,7 +227,7 @@ Rectangle {
             Layout.leftMargin: Tokens.spacing.sm
             Layout.rightMargin: Tokens.spacing.sm
             implicitHeight: 1
-            color: Tokens.chromeBorder
+            color: Tokens.navy.border
         }
 
         /* Settings and Backup, pinned. */

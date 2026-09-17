@@ -266,7 +266,13 @@ Item {
             QC.ComboBox {
                 id: rowsCombo
                 Layout.alignment: Qt.AlignVCenter
-                Layout.preferredWidth: 150
+                /* Wide enough for the longest preset label the model carries
+                   — "1000 / page" — at the largest font scale this app runs
+                   at, plus the padding and the indicator arrow the style
+                   draws inside the control. At 150 the arrow sat on the last
+                   two characters: the label was clipped, not elided, because
+                   the Fluent style's content item is not the one that elides. */
+                Layout.preferredWidth: 200
                 Layout.preferredHeight: Tokens.size.controlSmall + Tokens.spacing.xs
                 visible: root.showPageSize
                 model: root.rowsPresets

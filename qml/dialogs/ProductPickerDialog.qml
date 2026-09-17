@@ -31,10 +31,12 @@ import Mizan
  * WHAT IT SHOWS THAT THE TILE WALL CANNOT
  *
  * Every product, including the ones kept off the till (`show_on_pos = 0`) and
- * the ones out of stock. Both are marked in the status column. A hidden product
- * is perfectly sellable — the barcode scanner has always found them — so
- * refusing to list them here would leave the operator no way to sell something
- * that is sitting on the shelf.
+ * the ones out of stock. A hidden product is perfectly sellable — the barcode
+ * scanner has always found them — so refusing to list them here would leave
+ * the operator no way to sell something that is sitting on the shelf. The
+ * empty shelf is the one thing the till says out loud, and it says it at the
+ * moment the row is picked (`requireStock`), not as a verdict printed over a
+ * list whose other callers would sell that very row without a question.
  */
 AppDialog {
     id: dialog

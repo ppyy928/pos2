@@ -286,7 +286,7 @@ AppDialog {
                     RowLayout {
                         anchors.fill: parent
                         anchors.leftMargin: Tokens.spacing.md
-                        anchors.rightMargin: Tokens.spacing.xs
+                        anchors.rightMargin: Tokens.spacing.xs + Tokens.size.scrollSeat
                         spacing: Tokens.spacing.md
 
                         Text {

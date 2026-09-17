@@ -229,7 +229,13 @@ Item {
         RowLayout {
             anchors.fill: parent
             anchors.leftMargin: Tokens.spacing.sm
-            anchors.rightMargin: Tokens.spacing.sm
+            /* The scrollbar's seat, spent here: the Fluent bar is an
+               overlay inside the view's trailing edge that widens to 12px
+               when used, and the trailing stock figure is exactly what it
+               used to cover. The row stops a seat short of that edge and
+               the bar glides over clear sheet — the same rule CartLine
+               and PartySelect follow. Mirrors in Arabic, as anchors do. */
+            anchors.rightMargin: Tokens.spacing.sm + Tokens.size.scrollSeat
             spacing: Tokens.spacing.sm
 
             ColumnLayout {

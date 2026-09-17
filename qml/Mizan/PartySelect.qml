@@ -326,6 +326,18 @@ Item {
                     clip: true
                     model: sheet.shown
                     boundsBehavior: Flickable.StopAtBounds
+                    /* THE SCROLLBAR'S SEAT, spent by the row below. The
+                       Fluent scrollbar is an overlay pinned inside the
+                       view's trailing edge, and it widens to 12px the
+                       moment it is used — over whatever a row put there.
+                       The old view-level rightMargin moved the rows AND the
+                       bar together, so the widened bar still covered the
+                       trailing debt figures — the merchant drew the box
+                       around exactly that. Here the ROW keeps clear of the
+                       edge (its own trailing margin carries
+                       Tokens.size.scrollSeat) and the bar glides over empty
+                       sheet, never over a value. Mirrors in Arabic, as
+                       anchors do. */
                     QC.ScrollBar.vertical: FluentScrollBar {
                         policy: QC.ScrollBar.AsNeeded
                     }
@@ -358,7 +370,12 @@ Item {
                         RowLayout {
                             anchors.fill: parent
                             anchors.leftMargin: Tokens.spacing.sm
+                            /* The scrollbar's seat, spent here (see the
+                               list's own note): the trailing debt figures
+                               stay a full seat clear of the edge the bar
+                               widens over, on every row. */
                             anchors.rightMargin: Tokens.spacing.sm
+                                                  + Tokens.size.scrollSeat
                             spacing: Tokens.spacing.sm
 
                             ColumnLayout {

@@ -52,9 +52,10 @@ MAIN_QML = QML_DIR / "Main.qml"
 APP_NAME = "MIZAN POS"
 APP_ORG = "MIZAN"
 
-# MIZAN's audited accent. Drives Fluent's whole derived accent family
+# MIZAN's accent. Drives Fluent's whole derived accent family
 # (hover/pressed/selected), so setting it here recolours every styled control.
-BRAND_ACCENT = "#127A4B"
+# The same number Tokens.brand resolves to — one emerald, not two.
+BRAND_ACCENT = "#087F5B"
 
 # Light is the implemented baseline, same as pos. Overridden later by the
 # ui.theme setting once the settings bridge lands.

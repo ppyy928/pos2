@@ -8,11 +8,11 @@ import Mizan
  * The select-product popup: the shared table, over whatever screen is asking.
  *
  *   ┌ All products                                     ✕ ┐
- *   │ [ search by name or barcode ..................... ] │
- *   │ NAME        BARCODE        CATEGORY  STOCK  PRICE   │
- *   │ …                                                  │
- *   │ 2,999                                              │
- *   └────────────────────────────────────────────────────┘
+ *   │ [ search by name or barcode ....... ] [ All cats ▾ ] │
+ *   │ NAME         BARCODE        STOCK      SALE PRICE    │
+ *   │ …                                                    │
+ *   │ 1–100 of 2,999     ‹‹ ‹ Page 1 of 30 › ››  100 / page │
+ *   └──────────────────────────────────────────────────────┘
  *
  * A popup and not a workflow dialog, for the same reason ProductFinder's browse
  * list was: a picker is part of whatever screen is asking — a delivery, a

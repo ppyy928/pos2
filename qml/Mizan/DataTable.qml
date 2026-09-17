@@ -71,13 +71,18 @@ Item {
      *   badge    bool     draw the value as a soft chip
      *   tone     string   | function(row) -> "success"|"info"|"warning"|"danger"|"primary"
      *   actions  array    draw icon actions instead of a value — see RowActions
+     *   edit     bool     draw the value as an editable number field
+     *   stepper  bool     draw it with − and + around it; `step` is the increment
      *
      * Everything but `key` is optional. `tone` as a function is how a value earns
      * its colour — a negative balance is red because it is negative, not because
      * it is in the balance column.
      *
-     * `badge` and `actions` are the two cells that draw something other than
-     * text, and a column picks at most one of them.
+     * `badge`, `actions`, `edit` and `stepper` draw something other than plain
+     * text, and a column picks at most one of them. An editable column's `key`
+     * must point at the RAW value — the number, not a formatted string — because
+     * what an editor binds to has to be something it can parse back; the
+     * formatted text of the same figure can live in a sibling key.
      */
     property var columns: []
 
@@ -99,6 +104,12 @@ Item {
        is pos's `on_action(index.row(), action_id)` exactly — one handler per page
        switching on the id, rather than a signal per action. */
     signal actionTriggered(int row, string action)
+
+    /* A value was edited in an `edit` or `stepper` cell: row index, the column's
+       key, and the new value. The table reports; the page decides — it owns the
+       model, and a table that wrote back into a JS array itself would be a
+       second owner of the same list. */
+    signal cellEdited(int row, string key, var value)
 
     /* Right-click on a row. The row is selected first, so the menu the page pops
        visibly belongs to something — pos does the same (`indexAt(pos)` then the
@@ -527,17 +538,28 @@ Item {
                         required property var modelData
                         required property int index
 
-                        /* Which of the three cell bodies below draws. Resolved
+                        /* Which of the cell bodies below draws. Resolved
                            once, so they are mutually exclusive by construction
-                           instead of by three separate conditions that could all
-                           come out true on a column declaring both `badge` and
-                           `actions`. */
+                           instead of by five separate conditions that could all
+                           come out true on a column declaring two of them. */
                         readonly property string kind: modelData.actions !== undefined ? "actions"
+                                                     : modelData.stepper === true ? "stepper"
+                                                     : modelData.edit === true ? "edit"
                                                      : modelData.badge === true ? "badge"
                                                      : "text"
 
                         readonly property string tone: table.toneOf(modelData, row.rowData)
                         readonly property string display: table.displayOf(modelData, row.rowData)
+                        readonly property real step: modelData.step !== undefined
+                                                     ? Number(modelData.step) : 1
+
+                        /* The value as the row carries it, without the bidi mark
+                           a text cell adds: what an editor binds to has to be the
+                           number itself, and "\u200e250" does not parse back. */
+                        readonly property string rawText:
+                            row.rowData === null || row.rowData[modelData.key] === undefined
+                            || row.rowData[modelData.key] === null
+                            ? "" : String(row.rowData[modelData.key])
 
                         width: index < table.colWidths.length ? table.colWidths[index] : 0
                         height: row.height
@@ -582,6 +604,81 @@ Item {
                                                     : Fluent.textPrimary
                             elide: Text.ElideRight
                             maximumLineCount: 1
+                        }
+
+                        /* Editable number cell: a figure changed where it is
+                           read, rather than through a sheet that closes over it.
+                           `text: cell.rawText` is a real binding, and it survives
+                           exactly as long as it needs to: the page's cellEdited
+                           replaces the model array, which resets the view and
+                           re-creates this delegate with the new figure in it —
+                           the same reason CartLine pushes its quantity in rather
+                           than binding it. */
+                        NumberField {
+                            anchors.fill: parent
+                            anchors.leftMargin: table.cellPadding
+                            anchors.rightMargin: table.cellPadding
+                            visible: cell.kind === "edit"
+                            text: cell.rawText
+                            horizontalAlignment: table.alignmentOf(cell.modelData)
+                            font.pixelSize: Tokens.font.body
+                            font.weight: cell.tone !== "" ? Font.DemiBold : Font.Normal
+                            color: cell.tone !== "" ? Tokens.toneInk(cell.tone)
+                                                    : Fluent.textPrimary
+                            onEditingFinished: table.cellEdited(row.rowIndex,
+                                                                cell.modelData.key,
+                                                                value)
+                        }
+
+                        /* Stepper cell: − [ n ] +, the cart row's own control,
+                           for a quantity that is nudged far more often than it is
+                           retyped. The field between the two keys is editable for
+                           the same reason it is in the cart: twelve is faster to
+                           type than to tap. */
+                        Row {
+                            anchors.fill: parent
+                            anchors.leftMargin: table.cellPadding
+                            anchors.rightMargin: table.cellPadding
+                            visible: cell.kind === "stepper"
+                            spacing: 2
+
+                            IconButton {
+                                anchors.verticalCenter: parent.verticalCenter
+                                glyph: "ic_fluent_subtract_20_regular"
+                                glyphSize: Tokens.icon.sm
+                                /* Refusing the tap that would take the value to
+                                   zero or below, rather than sending a figure
+                                   the page has to reject — the cart's own rule
+                                   for its stepper. Removing a line is the bin
+                                   beside it, one tap away. */
+                                enabled: Number(cell.rawText) - cell.step > 0
+                                tooltip: Strings.t("cart.qty.decrease", "Less")
+                                onClicked: table.cellEdited(
+                                    row.rowIndex, cell.modelData.key,
+                                    Number(cell.rawText) - cell.step)
+                            }
+
+                            NumberField {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 72
+                                height: Tokens.size.control
+                                horizontalAlignment: TextInput.AlignHCenter
+                                font.pixelSize: Tokens.font.body
+                                font.weight: Font.DemiBold
+                                text: cell.rawText
+                                onEditingFinished: table.cellEdited(
+                                    row.rowIndex, cell.modelData.key, value)
+                            }
+
+                            IconButton {
+                                anchors.verticalCenter: parent.verticalCenter
+                                glyph: "ic_fluent_add_20_regular"
+                                glyphSize: Tokens.icon.sm
+                                tooltip: Strings.t("cart.qty.increase", "More")
+                                onClicked: table.cellEdited(
+                                    row.rowIndex, cell.modelData.key,
+                                    Number(cell.rawText) + cell.step)
+                            }
                         }
 
                         /* Badge cell: a soft chip, sized to its text and clamped

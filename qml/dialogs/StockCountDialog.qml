@@ -439,6 +439,14 @@ AppDialog {
                                 text: line.modelData.counted_text
                                 horizontalAlignment: TextInput.AlignHCenter
                                 placeholderText: "—"
+                                /* The row's own type, not the form's: Book and
+                                   Variance on either side are `body`, and the
+                                   editable cell shouting `bodyLarge` over them
+                                   made one column read as the whole table.
+                                   Same size, same weight, same family — the
+                                   field's border still says it is editable. */
+                                font.pixelSize: Tokens.font.body
+                                font.weight: Font.Normal
                                 /* On editing finished, not per keystroke: a
                                    half-typed "1" of "12" would post a variance of
                                    -11 and turn the row red under the operator's

@@ -266,6 +266,532 @@ EXTRA: dict[str, dict[str, str]] = {
         "fr": "Les ventes à crédit sont désactivées dans les paramètres.",
         "ar": "البيع بالدين معطّل في الإعدادات.",
     },
+
+    # THE PAYMENT ROW'S SECONDARY BUTTON, IN ONE WORD.
+    #
+    # An override, not a new key: pos's catalogue says "Partial / Debt", which fits
+    # neither the secondary button's width nor the merchant's word for it. The
+    # command underneath is unchanged — the same payment sheet, the same F8, the
+    # same Python that splits cash from debt — only the label is shorter. "Dette"
+    # at body size clears the 38% share of the row in French; "دين" has no width
+    # problem at all.
+    "pos.pay.partial": {
+        "en": "Debt",
+        "fr": "Dette",
+        "ar": "دين",
+    },
+    # The keypad's one mode, without the "#": the readout and the pad draw the
+    # number-sign glyph beside the word, and printing "#" as well is the same
+    # symbol twice.
+    "pos.numpad.qty": {
+        "en": "Qty",
+        "fr": "Qté",
+        "ar": "الكمية",
+    },
+    # The keypad's commit control and its spoken name — the accessible name and
+    # the tooltip are the same sentence, so a screen reader and a hover say the
+    # same thing.
+    "pos.numpad.submit": {
+        "en": "Submit",
+        "fr": "Valider",
+        "ar": "إدخال",
+    },
+    "pos.numpad.submit.qty": {
+        "en": "Submit quantity",
+        "fr": "Valider la quantité",
+        "ar": "إدخال الكمية",
+    },
+    # The same key in the money modes: + AMT / − DISC commit an amount, and
+    # the readout's tooltip says the act it will perform.
+    "pos.numpad.submit.amt": {
+        "en": "Submit amount",
+        "fr": "Valider le montant",
+        "ar": "إدخال المبلغ",
+    },
+    # The decimal key's tooltip, on the pads whose page has not said more.
+    "pos.numpad.decimal": {
+        "en": "Decimal point",
+        "fr": "Virgule décimale",
+        "ar": "الفاصلة العشرية",
+    },
+    # The cart row's remove button — its tooltip and accessible name. "Delete" was
+    # the generic action's word; a cart line is removed, not deleted from records.
+    "cart.remove_item": {
+        "en": "Remove item",
+        "fr": "Retirer l'article",
+        "ar": "إزالة الصنف",
+    },
+
+    # THE SCREENS pos NEVER HAD
+    #
+    # The rest of this table is one batch: every key this front end passes to
+    # Strings.t that exists in no catalogue anywhere (tools/i18n_check.py lists
+    # them — a key with no entry shows its English fallback in every language,
+    # which is how a "translated" screen stays half English). Grouped by screen,
+    # same {en, fr, ar} shape, merged over pos's table like everything above.
+
+    # The rail itself: the Returns destination, the section captions, and the
+    # collapse toggle (which was qsTr — dead here, nothing installs a QTranslator).
+    #
+    # Two overrides, not new keys: pos's catalogue calls these screens
+    # "Customers & Debts" and "Cash & Expenses", and both wrapped mid-word in
+    # the rail's 224px slot — an ellipsis where a name should be. One word
+    # each, and the pages the keys title follow them: the rail and a page
+    # heading are the same label, and two names for one screen is how a menu
+    # stops being a map of the app.
+    "nav.customers": {
+        "en": "Customers",
+        "fr": "Clients",
+        "ar": "العملاء",
+    },
+    "nav.cash": {
+        "en": "Finances",
+        "fr": "Finances",
+        "ar": "المالية",
+    },
+    "nav.returns": {
+        "en": "Returns",
+        "fr": "Retours",
+        "ar": "المرتجعات",
+    },
+    "nav.section.sell": {
+        "en": "Sell",
+        "fr": "Vendre",
+        "ar": "البيع",
+    },
+    "nav.section.stock": {
+        "en": "Stock",
+        "fr": "Stock",
+        "ar": "المخزون",
+    },
+    "nav.section.money": {
+        "en": "Money",
+        "fr": "Argent",
+        "ar": "المال",
+    },
+    "nav.section.manage": {
+        "en": "Manage",
+        "fr": "Gérer",
+        "ar": "الإدارة",
+    },
+    "nav.expand": {
+        "en": "Expand menu",
+        "fr": "Déplier le menu",
+        "ar": "توسيع القائمة",
+    },
+    "nav.collapse": {
+        "en": "Collapse menu",
+        "fr": "Replier le menu",
+        "ar": "تصغير القائمة",
+    },
+    # The category strip's edge buttons, which appear while it scrolls.
+    "action.scroll_back": {
+        "en": "Back",
+        "fr": "Précédent",
+        "ar": "السابق",
+    },
+    "action.scroll_forward": {
+        "en": "Forward",
+        "fr": "Suivant",
+        "ar": "التالي",
+    },
+    # The cart line's quantity steppers.
+    "cart.qty.decrease": {
+        "en": "Less",
+        "fr": "Moins",
+        "ar": "أنقص",
+    },
+    "cart.qty.increase": {
+        "en": "More",
+        "fr": "Plus",
+        "ar": "زد",
+    },
+    # The numpad's backspace key and its long-press hint.
+    "pos.numpad.back": {
+        "en": "Backspace",
+        "fr": "Effacer",
+        "ar": "مسح",
+    },
+    "pos.numpad.back.hint": {
+        "en": "Backspace — hold to clear",
+        "fr": "Effacer — maintenez pour tout effacer",
+        "ar": "مسح — استمر بالضغط للمسح الكامل",
+    },
+    # The login button while the password is being checked.
+    "login.busy": {
+        "en": "Signing in…",
+        "fr": "Connexion…",
+        "ar": "جارٍ تسجيل الدخول…",
+    },
+    # One dashboard card the old screen never named this way.
+    "dashboard.debts": {
+        "en": "Who owes money",
+        "fr": "Qui doit de l'argent",
+        "ar": "من عليه دين",
+    },
+    # The sales page.
+    "sales.description": {
+        "en": "Every completed sale, and what is still owed on it.",
+        "fr": "Chaque vente terminée, et ce qui reste dû.",
+        "ar": "كل عملية بيع مكتملة وما ما زال مستحقًا عليها.",
+    },
+    "sales.filter.all": {
+        "en": "All payments",
+        "fr": "Tous les paiements",
+        "ar": "كل طرق الدفع",
+    },
+    # The returns page and its two dialogs, whole: pos kept returns inside the
+    # sales screen, so none of this vocabulary existed.
+    "returns.description": {
+        "en": "Goods brought back, priced at what they were sold for.",
+        "fr": "Les marchandises ramenées, au prix de vente.",
+        "ar": "البضائع المرتجعة، بسعر بيعها.",
+    },
+    "returns.search.ph": {
+        "en": "Search a return or sale number",
+        "fr": "Rechercher un numéro de retour ou de vente",
+        "ar": "ابحث برقم المرتجع أو الفاتورة",
+    },
+    "returns.empty.title": {
+        "en": "Nothing has come back",
+        "fr": "Rien n'est revenu",
+        "ar": "لم يُرجَع شيء بعد",
+    },
+    "returns.col.time": {
+        "en": "Date",
+        "fr": "Date",
+        "ar": "التاريخ",
+    },
+    "returns.col.total": {
+        "en": "Refunded",
+        "fr": "Remboursé",
+        "ar": "المبلغ المسترد",
+    },
+    "return.details_title": {
+        "en": "Return",
+        "fr": "Retour",
+        "ar": "مرتجع",
+    },
+    "return.confirm": {
+        "en": "Confirm return",
+        "fr": "Confirmer le retour",
+        "ar": "تأكيد الإرجاع",
+    },
+    "return.done": {
+        "en": "Return {number} recorded",
+        "fr": "Retour {number} enregistré",
+        "ar": "تم تسجيل المرتجع {number}",
+    },
+    "return.sold": {
+        "en": "sold {qty}",
+        "fr": "vendu {qty}",
+        "ar": "بيعت {qty}",
+    },
+    "return.of": {
+        "en": "of {qty}",
+        "fr": "sur {qty}",
+        "ar": "من {qty}",
+    },
+    "return.refund": {
+        "en": "Refund (estimate)",
+        "fr": "Remboursement (estimation)",
+        "ar": "المبلغ المسترد (تقديري)",
+    },
+    # The reports page.
+    "reports.description": {
+        "en": "What was sold, earned, spent and is still owed.",
+        "fr": "Ce qui a été vendu, gagné, dépensé et reste dû.",
+        "ar": "ما تم بيعه وكسبه وإنفاقه وما ما زال مستحقًا.",
+    },
+    "reports.section.charts": {
+        "en": "Charts",
+        "fr": "Graphiques",
+        "ar": "الرسوم البيانية",
+    },
+    "reports.empty.title": {
+        "en": "Nothing in this range",
+        "fr": "Rien dans cette plage",
+        "ar": "لا شيء في هذا النطاق",
+    },
+    "reports.empty.body": {
+        "en": "Try a wider range of dates.",
+        "fr": "Essayez une plage de dates plus large.",
+        "ar": "جرّب نطاق تواريخ أوسع.",
+    },
+    "reports.compare": {
+        "en": "Compare with previous",
+        "fr": "Comparer avec la période précédente",
+        "ar": "مقارنة بالفترة السابقة",
+    },
+    # The payments page borrows most of its words; the employees page's search
+    # and the account hints are new.
+    "employees.search.ph": {
+        "en": "Search name or username",
+        "fr": "Rechercher un nom ou un identifiant",
+        "ar": "ابحث عن اسم أو اسم مستخدم",
+    },
+    "employees.password.keep": {
+        "en": "Leave empty to keep the current one",
+        "fr": "Laissez vide pour conserver l'actuel",
+        "ar": "اتركه فارغًا للإبقاء على كلمة المرور الحالية",
+    },
+    "employees.inactive.hint": {
+        "en": "An inactive account cannot sign in. Accounts are never deleted, "
+              "because sales carry the name of whoever made them.",
+        "fr": "Un compte inactif ne peut pas se connecter. Les comptes ne sont "
+              "jamais supprimés, car les ventes portent le nom de celui qui les "
+              "a faites.",
+        "ar": "الحساب غير النشط لا يمكنه تسجيل الدخول. لا تُحذف الحسابات أبدًا، "
+              "لأن المبيعات تحمل اسم من أجراها.",
+    },
+    # The backup page.
+    "backup.description": {
+        "en": "Copies of the whole database, newest first.",
+        "fr": "Copies de la base de données complète, plus récentes d'abord.",
+        "ar": "نسخ كاملة من قاعدة البيانات، الأحدث أولًا.",
+    },
+    "backup.empty.title": {
+        "en": "No backups yet",
+        "fr": "Aucune sauvegarde",
+        "ar": "لا توجد نسخ احتياطية بعد",
+    },
+    "backup.empty.body": {
+        "en": "Take one before the first busy day.",
+        "fr": "Prenez-en une avant le premier jour chargé.",
+        "ar": "خُذ نسخة قبل أول يوم مزدحم.",
+    },
+    "backup.created": {
+        "en": "Saved {name}",
+        "fr": "{name} enregistrée",
+        "ar": "تم حفظ {name}",
+    },
+    "backup.restored": {
+        "en": "Restored. Close and reopen the application.",
+        "fr": "Restaurée. Fermez puis rouvrez l'application.",
+        "ar": "تمت الاستعادة. أغلق التطبيق وافتحه من جديد.",
+    },
+    # The settings page's own description, its save toast, and the diagnostics
+    # card.
+    "settings.description": {
+        "en": "The shop's details, and how the till and its printers behave.",
+        "fr": "Les détails de la boutique, et le comportement de la caisse et "
+              "de ses imprimantes.",
+        "ar": "تفاصيل المتجر وسلوك نقطة البيع وطابعاتها.",
+    },
+    "settings.saved": {
+        "en": "Saved",
+        "fr": "Enregistré",
+        "ar": "تم الحفظ",
+    },
+    "settings.logs": {
+        "en": "Diagnostics",
+        "fr": "Diagnostics",
+        "ar": "التشخيصات",
+    },
+    "settings.logs.open": {
+        "en": "Open log folder",
+        "fr": "Ouvrir le dossier des journaux",
+        "ar": "افتح مجلد السجلات",
+    },
+    # The export dialog.
+    "export.body": {
+        "en": "Every product, with its cost, price, stock, category and unit — "
+              "the same columns the importer reads.",
+        "fr": "Chaque produit, avec son coût, son prix, son stock, sa catégorie "
+              "et son unité — les mêmes colonnes que l'importateur lit.",
+        "ar": "كل منتج مع تكلفته وسعره ومخزونه وفئته ووحدته — نفس الأعمدة التي "
+              "يقرأها المستورد.",
+    },
+    "export.folder": {
+        "en": "Folder",
+        "fr": "Dossier",
+        "ar": "المجلد",
+    },
+    "export.folder.ph": {
+        "en": "Leave empty for the application's data folder",
+        "fr": "Laissez vide pour le dossier de données de l'application",
+        "ar": "اتركه فارغًا لمجلد بيانات التطبيق",
+    },
+    "export.done": {
+        "en": "{count} products written",
+        "fr": "{count} produits écrits",
+        "ar": "تمت كتابة {count} منتجًا",
+    },
+    # The import dialog's file filter name.
+    "import.filter": {
+        "en": "CSV files",
+        "fr": "Fichiers CSV",
+        "ar": "ملفات CSV",
+    },
+    # The arrange screen's favourites.
+    "favorites.clear": {
+        "en": "Clear favourites",
+        "fr": "Vider les favoris",
+        "ar": "مسح المفضلة",
+    },
+    "favorites.empty.title": {
+        "en": "No favourites yet",
+        "fr": "Aucun favori",
+        "ar": "لا مفضلات بعد",
+    },
+    "favorites.empty.body": {
+        "en": "Star the products that sell all day; they become the first tab "
+              "on the till.",
+        "fr": "Étoilez les produits qui se vendent toute la journée ; ils "
+              "deviennent le premier onglet de la caisse.",
+        "ar": "ضع نجمة على المنتجات التي تُباع طوال اليوم؛ تصبح أول تبويب في "
+              "نقطة البيع.",
+    },
+    # The generic error state's title, used by the drafts dialog.
+    "state.error": {
+        "en": "Something went wrong",
+        "fr": "Une erreur s'est produite",
+        "ar": "حدث خطأ ما",
+    },
+    # -- The title bar's own action, and the delivery form's new words.
+    #
+    # One key, because the other four chips reuse keys that already exist:
+    # "Add Customer" is `customers.add`, "Add product" is `products.add`,
+    # "Arrange products" is `products.arrange.action`, "Barcodes" is
+    # `products.hdr.barcode`.
+    #
+    # `purchases.supplier.hint` is an OVERRIDE: pos's catalogue says "Tap to
+    # attach a supplier", which is a two-line story under a field that has
+    # room for one line — the till's customer field asks its question in the
+    # title alone, and a delivery opens the same way.
+    "pos.action.refresh": {
+        "en": "Refresh products",
+        "fr": "Actualiser les produits",
+        "ar": "تحديث المنتجات",
+    },
+    "purchases.supplier.hint": {
+        "en": "Select supplier (F3)",
+        "fr": "Sélectionner un fournisseur (F3)",
+        "ar": "اختر المورّد (F3)",
+    },
+    "purchases.finder.ph2": {
+        "en": "Scan or search a product (F2)",
+        "fr": "Scannez ou cherchez un produit (F2)",
+        "ar": "امسح أو ابحث عن منتج (F2)",
+    },
+    "purchases.empty.hint2": {
+        "en": "Nothing on this delivery yet. Scan a product, search for one, "
+              "or start from what this supplier sent last time.",
+        "fr": "Rien sur ce bon de livraison pour l'instant. Scannez un "
+              "produit, cherchez-le, ou partez de ce que ce fournisseur a "
+              "livré la dernière fois.",
+        "ar": "لا شيء في هذا التوريد بعد. امسح منتجًا أو ابحث عنه، أو ابدأ "
+              "ممّا أرسله هذا المورّد آخر مرة.",
+    },
+    "purchases.empty.no_supplier": {
+        "en": "Attach a supplier and their last items will appear here.",
+        "fr": "Associez un fournisseur : ses derniers articles apparaîtront ici.",
+        "ar": "أرفق مورّدًا وستظهر آخر أصنافه هنا.",
+    },
+    "purchases.recent.title": {
+        "en": "Last from {name}",
+        "fr": "Derniers de {name}",
+        "ar": "آخر ما ورد من {name}",
+    },
+    "purchases.card.lines": {
+        "en": "Lines",
+        "fr": "Lignes",
+        "ar": "الأسطر",
+    },
+    "purchases.card.qty": {
+        "en": "Total qty",
+        "fr": "Qté totale",
+        "ar": "إجمالي الكمية",
+    },
+    "purchases.card.cost": {
+        "en": "Total cost",
+        "fr": "Coût total",
+        "ar": "إجمالي التكلفة",
+    },
+    # The shell's own four: the title-bar theme toggle (qsTr before — dead, the
+    # same as the rail's collapse toggle was) and the page host's two states.
+    "shell.theme.light": {
+        "en": "Light theme",
+        "fr": "Thème clair",
+        "ar": "المظهر الفاتح",
+    },
+    "shell.theme.dark": {
+        "en": "Dark theme",
+        "fr": "Thème sombre",
+        "ar": "المظهر الداكن",
+    },
+    "pagehost.unbuilt": {
+        "en": "This screen has not been rebuilt yet.",
+        "fr": "Cet écran n'a pas encore été reconstruit.",
+        "ar": "لم تُعَدْ بناء هذه الشاشة بعد.",
+    },
+    "pagehost.failed": {
+        "en": "{title} failed to load",
+        "fr": "{title} n'a pas pu être chargé",
+        "ar": "تعذّر تحميل {title}",
+    },
+    # The cart's two ready states. The charge and discount vocabulary that
+    # used to sit here went with the keypad modes that showed it: those
+    # lines' names come from pos's own catalogue ("pos.free_plus" /
+    # "pos.free_minus", reached through Till.addFreeAmount), which is where
+    # the capability still lives.
+    "pos.cart.ready.title": {
+        "en": "Ready for the next sale",
+        "fr": "Prêt pour la vente suivante",
+        "ar": "جاهز للبيع التالي",
+    },
+    "pos.cart.ready.body": {
+        "en": "Scan a barcode or choose a product to begin.",
+        "fr": "Scannez un code-barres ou choisissez un produit pour commencer.",
+        "ar": "امسح باركودًا أو اختر منتجًا للبدء.",
+    },
+    "pos.grid.empty": {
+        "en": "No products in this category",
+        "fr": "Aucun produit dans cette catégorie",
+        "ar": "لا منتجات في هذه الفئة",
+    },
+    "pos.hold.hint": {
+        "en": "Hold the sale (F5)",
+        "fr": "Mettre la vente en attente (F5)",
+        "ar": "تعليق البيع (F5)",
+    },
+    # -- The login's brand field and the till's new labelled controls. pos's own
+    # keys carry the long forms ("Hold sale", "Payment calculator", "Cancel
+    # sale"); the buttons below print the short ones, because a 3-column action
+    # grid cell is ~120px wide and "Payment calculator" at that width is a
+    # truncated word.
+    "login.tagline": {
+        "en": "Sales and inventory, in balance.",
+        "fr": "Ventes et stock, en équilibre.",
+        "ar": "المبيعات والمخزون، في توازن.",
+    },
+    "pos.action.hold": {
+        "en": "Hold",
+        "fr": "Suspendre",
+        "ar": "تعليق",
+    },
+    "pos.action.suspended": {
+        "en": "Suspended",
+        "fr": "Suspendues",
+        "ar": "المعلّقة",
+    },
+    "pos.action.calculator": {
+        "en": "Calculator",
+        "fr": "Calculatrice",
+        "ar": "الآلة الحاسبة",
+    },
+    "pos.action.clear": {
+        "en": "Clear cart",
+        "fr": "Vider le panier",
+        "ar": "تفريغ السلة",
+    },
+    # The labelled stock value on a product tile: "Stock 24", not an
+    # unexplained 24.
+    "pos.tile.stock": {
+        "en": "Stock",
+        "fr": "Stock",
+        "ar": "المخزون",
+    },
 }
 
 

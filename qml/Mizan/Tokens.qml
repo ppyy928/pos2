@@ -30,14 +30,24 @@ QtObject {
     // =====================================================================
     // BRAND
     // =====================================================================
-    // Deep emerald. Carried over from MIZAN's audited palette: white-on-accent
-    // is ~5.4:1, so it is safe as a filled CTA, which #605ed2 (Fluent's
-    // default) is not at this text size.
-    readonly property color brand:        isDark ? "#3ECF7A" : "#127A4B"
-    readonly property color brandHover:   isDark ? "#62DB94" : "#0E6B42"
-    readonly property color brandPressed: isDark ? "#2AB867" : "#0B5C38"
-    readonly property color brandTint:    isDark ? "#12351F" : "#E7F2EB"
+    // The one emerald. White-on-accent clears 4.5:1 at the text sizes this
+    // app draws it at, so it is safe as a filled CTA. The hover/pressed pair
+    // are the same hue stepped in lightness — a button that shifts hue under
+    // the thumb reads as a different button.
+    readonly property color brand:        isDark ? "#3ECF7A" : "#087F5B"
+    readonly property color brandHover:   isDark ? "#62DB94" : "#066B4D"
+    readonly property color brandPressed: isDark ? "#2AB867" : "#05573F"
+    readonly property color brandTint:    isDark ? "#12351F" : "#E8F5EF"
     readonly property color onBrand:      isDark ? "#06240F" : "#FFFFFF"
+
+    /* A disabled PRIMARY, drawn by this app rather than borrowed from the
+       style: the vendored Fluent has no controlFillDisabled at all (a
+       binding that names it silently keeps the last valid colour — an
+       emerald button that never greys), and Fluent's own answer for a
+       disabled accent button is the accent fill with pale text, which the
+       brief forbids: "disabled must visibly look disabled, not like an
+       active green button with faded text". Neutral grey, clearly inert. */
+    readonly property color disabledFill: isDark ? "#2E3742" : "#C7CDD5"
 
     // =====================================================================
     // CHANNEL PALETTE — the "coloured" half of the brief
@@ -48,18 +58,19 @@ QtObject {
     // a module keeps its hue everywhere it appears — nav, KPI, chart series,
     // badge, receipt.
     readonly property QtObject hue: QtObject {
-        readonly property color emerald: isDark ? "#3ECF7A" : "#127A4B"   // money in, cash, confirm
+        // The first entry is the brand's own hue — one accent, not two greens.
+        readonly property color emerald: isDark ? "#3ECF7A" : "#087F5B"   // money in, cash, confirm
         readonly property color indigo:  isDark ? "#8C9EFF" : "#3949AB"   // card, sales
         readonly property color teal:    isDark ? "#4FD1C5" : "#14707C"   // stock, info
         readonly property color amber:   isDark ? "#E8B04B" : "#B0700F"   // credit, due, warning
-        readonly property color crimson: isDark ? "#F87171" : "#C4342B"   // money out, loss, destroy
+        readonly property color crimson: isDark ? "#F87171" : "#C42B1C"   // money out, loss, destroy
         readonly property color violet:  isDark ? "#B69BE8" : "#6A3AAF"   // analytics, reports
         readonly property color rose:    isDark ? "#EE8FB4" : "#B02A63"   // customers, debts
         readonly property color slate:   isDark ? "#9FB0C9" : "#46556E"   // neutral, archived
     }
 
     readonly property QtObject tint: QtObject {
-        readonly property color emerald: isDark ? "#12351F" : "#E7F2EB"
+        readonly property color emerald: isDark ? "#12351F" : "#E8F5EF"
         readonly property color indigo:  isDark ? "#191E3F" : "#E8EAF7"
         readonly property color teal:    isDark ? "#0F2E2B" : "#DFEFF1"
         readonly property color amber:   isDark ? "#3A2C10" : "#FBEEDB"
@@ -198,10 +209,67 @@ QtObject {
     }
 
     // =====================================================================
+    // WORKSPACE — the quiet canvas the Login and POS screens sit on
+    // =====================================================================
+    /* The POS's two greys: a cool app canvas and a product workspace one step
+       lighter, so the white tiles and the white transaction panel both have
+       something to sit against. The structural border is the one every edge
+       on those two screens shares — strong enough to be seen at a counter,
+       quiet enough that sixty tiles do not read as sixty boxes. Opaque on
+       purpose — Fluent's card surfaces are translucent for Mica, and a
+       translucent card over a flat canvas is a card nobody can see the edge
+       of. */
+    readonly property QtObject workspace: QtObject {
+        readonly property color canvas:  isDark ? "#1B1F27" : "#E9EDF2"
+        readonly property color surface: isDark ? "#232830" : "#FFFFFF"
+        readonly property color inset:   isDark ? "#2A303A" : "#F0F2F5"
+        readonly property color shelf:   isDark ? "#1F242C" : "#F2F4F7"
+        readonly property color border:  isDark ? "#333A45" : "#CBD3DD"
+        readonly property color text:    isDark ? "#E7ECF6" : "#182230"
+        readonly property color textSub: isDark ? "#97A3BD" : "#566579"
+    }
+
+    // =====================================================================
+    // THE NAVIGATION SIDEBAR — dark navy, in both themes
+    // =====================================================================
+    /* The merchant's first requirement: the rail must be distinguishable from
+       the workspace at a glance, by surface colour and not by a hairline. A
+       navy #142033 family that stays dark whichever theme the pages wear, so
+       the separation never depends on the operator's theme choice. Hover and
+       active are the merchant's own steps of the same hue; the emerald marker
+       is the brand's, pinned light because it sits on navy in both themes. */
+    readonly property QtObject navy: QtObject {
+        readonly property color base:    isDark ? "#101A29" : "#142033"
+        readonly property color hover:   isDark ? "#1B2C44" : "#1D2E47"
+        readonly property color active:  isDark ? "#203649" : "#223A4D"
+        readonly property color border:  isDark ? "#0B1421" : "#0D1626"
+        readonly property color caption: "#7E90AC"
+        readonly property color text:    "#E7ECF6"
+        readonly property color muted:   "#9AAAC2"
+        readonly property color mark:    "#3ECF7A"
+    }
+
+    // =====================================================================
+    // THE TOTAL BLOCK — dark petrol, the anchor of the transaction panel
+    // =====================================================================
+    /* The final amount is the one figure on the till read from a metre away,
+       standing up, by somebody about to hand over money for it. A dark petrol
+       surface makes it unmistakable without shouting: darker than the white
+       cart, lighter than the navy rail, with a cool emerald accent for the
+       label and pure white for the figure itself. */
+    readonly property QtObject totalBlock: QtObject {
+        readonly property color base:    isDark ? "#0F222C" : "#142B38"
+        readonly property color edge:    isDark ? "#1E3A48" : "#1D3D4D"
+        readonly property color label:   "#75E2BC"
+        readonly property color amount:  "#FFFFFF"
+        readonly property color meta:    "#8FA9B8"
+    }
+
+    // =====================================================================
     // DARK CHROME — nav rail and the POS totals dock
     // =====================================================================
-    // The rail and the dock are the two surfaces that stay dark in both
-    // themes. They anchor the layout and make the coloured content pop.
+    // The dock stays dark in both themes (the purchase dialog still uses it);
+    // the rail is light now, so only the dock family reads from here.
     readonly property color chromeFrom:   "#141C30"
     readonly property color chromeTo:     "#0F1526"
     readonly property color chromeHover:  "#1D2740"
@@ -219,8 +287,12 @@ QtObject {
     readonly property color dockTo:   "#0F1930"
 
     // Login backdrop. Fixed in both themes — it is the product's front door.
-    readonly property color loginFrom: "#0C4A4E"
-    readonly property color loginTo:   "#05090F"
+    // A navy-to-petrol run with light held in the middle rather than fading
+    // to black at the bottom: the lower half of the old teal-to-black
+    // gradient read as dead space, and a front door should not trail off.
+    readonly property color loginFrom: "#101C2E"
+    readonly property color loginMid:  "#12303B"
+    readonly property color loginTo:   "#143B45"
 
     /* The login card sits on that fixed dark gradient in BOTH themes, so its
        surfaces cannot come from Fluent.cardBackground: those are translucent by
@@ -251,122 +323,138 @@ QtObject {
         // Surfaces.
         readonly property int topBar:        64
         readonly property int taskHeader:    72
-        readonly property int navExpanded:  300
+        /* 224, not 300: the rail is navigation, not a page. 224 holds every
+           destination label in all three languages (the previous 300 spent its
+           surplus on air beside the labels), and the 76 pixels it gives back
+           are two thirds of a product-tile column on the selling screen. */
+        readonly property int navExpanded:  224
         readonly property int navCompact:    68
 
         // POS.
         /* cartRow carries an inline quantity stepper, which pos does not have:
-           there, changing a quantity means selecting the line and retyping it on
-           the numpad, or opening a dialog. A 48px −/+ pair on the row itself is the
-           single biggest touch win available here, and it sets the floor:
-           name line (23) + gap (2) + stepper (48) + padding (2×6) = 85.
+            there, changing a quantity means selecting the line and retyping it on
+            the numpad, or opening a dialog. A 48px −/+ pair on the row itself is the
+            single biggest touch win available here, and it sets the floor.
 
-           It was 120, which left 35px of air per row and fitted three lines in the
-           cart's column — a sale of four items had to be scrolled to be read, which
-           is the one list on this screen an operator checks against the goods in
-           front of them. 88 is the content plus a hair, and fits five.
+            The row is two lines: the name with the line total on the first,
+            the unit price, the stepper and Remove on the second —
+              name line (23) + gap (2) + stepper (48) + hair = 74
+            — so six rows fit where five did at 88 and four at the original
+            120. The floor is the stepper's 48 and the name line is type, so
+            it cannot go lower without giving one of those up.
 
-           Scaled with the text, for the tile's reason: the name line is type, and
-           a 21px name under a fixed 88 would push the stepper out of the card. */
-        readonly property int cartRow:      Math.round(88 * tokens.fontScale)
-
-        /* Tile metrics are derived from their own content, not from a multiple
-           of pos's 180×110 — that tile was sized around 12px type, and scaling
-           the box by 1.5 while the type inside grows by 1.4 would just inherit
-           its proportions by accident.
-
-                padding      14
-                name         52   two lines of font.tileName (18px → 26 each)
-                gap           6
-                price        34   one line of font.tilePrice (26px)
-                padding      14
-                           ----
-                           120
-
-            tileMin is a floor, not a fixed width, and `tileColumns` is the count the
-            wall aims for: the grid takes the smaller of the two, so a narrow window
-            drops to three or two and a wide one stays at four with the surplus spread
-            between the tiles rather than baked into them.
-
-            168 rather than the 200 this started at. 200 put three tiles across the
-            till's product zone and left the fourth column's worth of space spread as
-            padding inside them — a wall of big cards with fewer products on it, which
-            is the opposite of what a tile wall is for. At 168 a name still gets two
-            lines at 18px (about 15 characters a line, which covers "Coca-Cola 1.5L"
-            and elides the pack size — the tooltip carries the untruncated name).
-
-            THE TEXT ZONES SCALE WITH THE TEXT SIZE. The tile is a container for
-            type, not a touch target: at `ui.font_scale` large the name needs 59px
-            for its two lines and the price needs a wider card to stay on one line,
-            and a fixed 52px/168px would clip both — the number on the card is the
-            thing this whole wall exists to show. So tile, tileName, tileMin,
-            tileMax and the photo band all grow with `fontScale`, which is what
-            keeps a card at ANY text size looking exactly like a card: the same
-            two-line name, the same one-line price, nothing elided that was not
-            elided at normal. The paddings are the one thing held constant — they
-            are the frame around the type, not the type. */
-        readonly property int tile:         Math.round(120 * tokens.fontScale)
-        readonly property int tileName:     Math.round(52 * tokens.fontScale)
-        readonly property int tileMin:      Math.round(168 * tokens.fontScale)
+            Scaled with the text, for the tile's reason: the name line is type, and
+            a 21px name under a fixed 74 would push the stepper out of the card. */
+        readonly property int cartRow:      Math.round(74 * tokens.fontScale)
 
         /*
-         * The wall's column count, and the widest a tile draws.
+         * COMPACT, TEXT-FIRST TILES.
          *
-         * WHY THE COUNT IS FIXED AND NOT FLOWED
+         *     padding      12
+         *     name         44   two lines of font.tileName (17px → 22 each)
+         *     gap           6
+         *     price        28   one line of font.tilePrice (20px)
+         *     padding      12
+         *                ----
+         *                102
          *
-         * It was flowed from `tileMin`, which meant the navigation rail decided it:
-         * collapsing the rail widens the product zone by 240px, so the wall jumped
-         * from four columns to five and every tile in it changed size and position
-         * mid-sale. A cashier's hand learns where a product IS. Reflowing the whole
-         * wall as a side effect of collapsing a menu is the kind of thing that makes
-         * somebody tap the wrong tile.
+         * The card leads with its text. A product without a photo is the
+         * normal case, not a degraded one, so the no-photo tile IS the tile;
+         * a photo is a compact band this card grows above the name, sized for
+         * recognition rather than display. The large framed placeholder this
+         * replaced reserved 40% of every card for a picture most products do
+         * not have.
          *
-         * So four is the target at any width that can hold four, and the extra room
-         * from a collapsed rail becomes gutter between the tiles instead of a fifth
-         * column. `tileMax` is what caps them: without it, "not reflowing" would
-         * just mean four increasingly enormous cards.
+         * tileMin is a floor, not a fixed width, and `tileColumns` is the
+         * count the wall aims for: the grid takes the smaller of the two, so
+         * a narrow window drops to three or two and a wide one stays at four
+         * with the surplus spread between the tiles rather than baked into
+         * them.
          *
-         * 192 is what a tile is at the normal layout — the zone at 795px, four
-         * columns, one gap out of each cell — so the cap does nothing until the rail
-         * is collapsed and then holds the tiles exactly where they were.
-         *
-         * Scaled with the text, for tileMin's reason: the cap is the widest a
-         * card draws, and a card at a larger text size is a wider card.
-         */
+         * THE TEXT ZONES SCALE WITH THE TEXT SIZE. The tile is a container
+         * for type, not a touch target: at `ui.font_scale` large the name
+         * needs its two lines and the price needs a wider card to stay on one
+         * line, and fixed values would clip both. So tile, tileName, tileMin,
+         * tileMax and the photo band all grow with `fontScale`; the paddings
+         * are the one thing held constant — they are the frame around the
+         * type, not the type. */
+        readonly property int tile:         Math.round(102 * tokens.fontScale)
+        readonly property int tileName:     Math.round(44 * tokens.fontScale)
+        readonly property int tileMin:      Math.round(160 * tokens.fontScale)
+
+         /*
+          * The ARRANGE screen's column count, and the text tile's ceiling.
+          *
+          * The till's own wall flows its columns from the width it is
+          * given now — a card with both a floor and a ceiling makes the
+          * arithmetic safe, and a wider window simply shows more products.
+          * The arrange screen keeps the fixed count: it is a picture of
+          * the wall as the till shows it, and the count is part of the
+          * answer "which tile is where?" it exists to edit.
+          *
+          * `tileMax` remains the text tile's ceiling on the till — the
+          * surplus of a wide cell is gutter, never a wider card.
+          *
+          * Scaled with the text, for tileMin's reason: the cap is the widest a
+          * card draws, and a card at a larger text size is a wider card.
+          */
         readonly property int tileColumns:    4
         readonly property int tileMax:      Math.round(192 * tokens.fontScale)
 
-        /* The photo card — the same tile with a picture above it.
+        /* The image card is HORIZONTAL now: a true square on the leading edge,
+         * the product's words beside it.
          *
-         *     padding      12
-         *     photo        84   the band, inset by the card's own padding
-         *     gap          12
-         *     name         52
-         *     slack        10   where a one-line name leaves its room
-         *     price        34
-         *     padding      12
-         *                ----
-         *                 216   = tile + tileImage + spacing.sm
+         *     ┌────────┬────────────────────────────┐
+         *     │        │ Atlas Detergent 5Kg        │
+         *     │ square │ 1,017.13          Stock 70│
+         *     └────────┴────────────────────────────┘
          *
-         * Derived from the compact tile rather than typed as a second number:
-         * everything below the photo IS the compact tile, so a change to the name
-         * or the price line moves both cards and cannot move only one.
+         * The square is the recognition target — 84 is inside the 72–88 band a
+         * photo needs to be told apart from its neighbour at a glance — and
+         * the card's height is its CONTENT's: two name lines plus one money
+         * line plus the paddings. The square fills the card's full height
+         * (the merchant's rule: the photo's height IS the card's, no empty
+         * strips above or below), and the words centre vertically beside it.
          *
-         * 84 is a deliberate band and not a square, and it came down from 112: a
-         * square photo on a 192px card is 192px tall and pushes the price line off a
-         * 1080p screen at three rows. It is also the honest size for a shop that has
-         * photographed part of its catalogue — the band a product without a photo
-         * shows is empty, and 84 wastes a third less of the card than 112 did while
-         * still reading as a picture frame at about 2:1.
+         * The card's padding is Tokens.spacing.sm on all four sides, equal
+         * by design for the WORDS' column; the square's edge spans border to
+         * border on its own side.
          *
-         * Scaled with the text, like everything else about the card's shape: the
-         * band keeps its ~2:1 against a tileMediaMin that grows. */
+         * tileMediaMin is the width at which that composition still reads:
+         * the square, the frame's padding, and a text column wide enough
+         * for a wrapped name. The wall drops to the compact text tile
+         * below two columns of this — one fat card is a wall with nothing
+         * on it. tileMediaMax is the ceiling: past it the surplus goes to
+         * the gutter, never to a wider card.
+         *
+         * Scaled with the text, like every other part of the card's shape: a
+         * larger text size is a taller name, a wider price, a bigger square. */
         readonly property int tileImage:     Math.round(84 * tokens.fontScale)
-        readonly property int tileMedia:    tile + tileImage + 12
-        /* A photo needs more width than a name does before it reads as a photo
-           rather than a stripe. 176 keeps the band at about 2:1 and takes four
-           across the till's product zone, same as the compact card. */
-        readonly property int tileMediaMin: Math.round(176 * tokens.fontScale)
+        readonly property int tileMedia:     Math.round(94 * tokens.fontScale)
+        /* PosTile's height in its photo face, for a GridView that has to pick
+         * a cell height BEFORE the first card exists. The same terms the card
+         * itself sums — two paddings, the two-line name band, the money block
+         * — written once here so the till's wall and the arrange screen size
+         * their cells from the identical number, and neither can drift from
+         * the card those cells hold. */
+        readonly property int tileMediaHeight: {
+            var money = Math.round(tokens.font.tilePrice * 1.35)
+                        + (tokens.spacing.xs
+                           + Math.round(tokens.font.caption * 1.4))
+            return 2 * tokens.spacing.sm + tileName + money
+        }
+        /* A LITTLE WIDER than the first cut (200), then wider again: at 200
+           a two-word name still wrapped under itself, and at 210 the wall
+           still paid for every column in wrapped second lines — the merchant
+           asked for cards wide enough that one-line names are the norm, not
+           the lucky case. 220 raw holds THREE columns in the 1096px
+           workspace at this shop's font scale with room left for wider
+           cells: the grid settles at 3 × ~355px cards, the words' column
+           beside the photo runs ~213px, and a two-word name sits on one
+           line. The column the fourth bench used to occupy was never worth
+           the wrap it cost. */
+        readonly property int tileMediaMin:  Math.round(220 * tokens.fontScale)
+        readonly property int tileMediaMax:  Math.round(360 * tokens.fontScale)
 
         /* The form's own thumbnail. Square, because that is the shape of the
            question "which picture is this?" and it sits beside a column of
@@ -374,19 +462,51 @@ QtObject {
         readonly property int thumb:        168
 
         readonly property int numpadKey:     72
+        /* The till's own pad, drawn inside the transaction panel rather than
+            in a modal. 56: the merchant's own range after a round of "the
+            digits are too small to strike without looking" — every key is
+            struck in peripheral vision, and the pad now fills the panel's
+            width beside the readout, so height is the only lever left for
+            hit area. The modal sheets keep the 72 above. */
+        readonly property int keypadKey:     56
+        /* The sale-action toolbar's buttons: icon and label both, at a size an
+           arm's-length tap can find. 56 after the merchant's round: 46 fit
+           the word and the glyph but read as chrome rather than as a command
+           — the same height the app gives every primary control. */
+        readonly property int actionKey:     56
+        /* The Cash / Debt row's height inside the payment heroes, and the
+           full-width payment bar the total and the heroes share at the
+           screen's foot — one row, one height, the two decisions a till
+           makes a hundred times a day. Taller than the last cut (76/84):
+           the merchant asked for a bar that reads even better from standing
+           height — the total figure at 54px and both buttons near 84 tall —
+           and the pay bar is the last thing on the screen, so the height it
+           spends is height the tile wall above it could not keep anyway. */
+        readonly property int payRow:        84
+        readonly property int payBar:        92
         readonly property int dock:         180   // totals dock
 
-        /* The cart column is pinned, as it is in pos — but to 500, not pos's
-           470. What sets the floor is the numpad: five columns (three digits,
-           and the mode column pos puts the entry modes in) at numpadKey 72,
-           with 8px gaps and 20px card padding, is 5×72 + 4×8 + 2×20 = 432.
-           500 leaves the cart lines' amount column room to hold a six-figure
-           total at font.amount without eliding. */
-        readonly property int cartColumn:   500
+        /* The transaction panel's width, pinned. 420: wide enough for a
+           six-figure line total beside a name and a stepper, a 3-key-wide
+           keypad with its mode column, and the Cash / Partial row — and no
+           wider, because every pixel past it is a pixel taken from the
+           product wall. */
+        readonly property int cartColumn:   Math.round(420 * tokens.fontScale)
 
         // Tables — 56 not 48, because a finger scrolls these.
         readonly property int tableRow:      56
         readonly property int tableHeader:   48
+
+        /* The scrollbar's seat, reserved. The Fluent bar is an overlay
+           pinned inside the view's trailing edge: 4px at rest, widening to
+           12 the moment it is used — over whatever a row put there. A
+           ListView's own `anchors.rightMargin` moves the view AND its rows
+           together, so the old margin-only reservation still put the
+           widened bar on top of the trailing figures. The seat is spent by
+           the CONTENT instead (the row's own trailing margin, the
+           delegate's width), leaving clear sheet for the bar to glide
+           over; 16 is the 12px bar plus a hair of daylight. */
+        readonly property int scrollSeat:    16
 
         // Padding.
         readonly property int pagePadding:   28
@@ -395,9 +515,9 @@ QtObject {
     }
 
     readonly property QtObject radius: QtObject {
-        readonly property int sm:  6
-        readonly property int md: 10
-        readonly property int lg: 16
+        readonly property int sm:  6   // inputs, chips, small controls
+        readonly property int md:  8   // tiles, buttons, cart rows
+        readonly property int lg:  12  // major surfaces: cards, panels
         readonly property int pill: 9999
     }
 
@@ -469,10 +589,22 @@ QtObject {
 
         // POS-only. The total is read from a metre away, standing up.
         readonly property int overline:   Math.round(13 * tokens.fontScale)  // table headers, KPI labels (caps)
-        readonly property int tileName:   Math.round(18 * tokens.fontScale)
-        readonly property int tilePrice:  Math.round(26 * tokens.fontScale)
+        readonly property int tileName:   Math.round(17 * tokens.fontScale)
+        readonly property int tilePrice:  Math.round(20 * tokens.fontScale)
         readonly property int amount:     Math.round(34 * tokens.fontScale)  // cart line totals, KPI values
-        readonly property int posTotal:   Math.round(64 * tokens.fontScale)
+        /* The pay bar's figure. 42 was still the merchant's "صغير" on the
+           second look; 46 at a 72px bar still was on the third, standing
+           two steps back from the counter. 50 in an 84px bar was the
+           fourth cut, and 54 in the 92px bar is the fifth: same verdict,
+           one more step back. The label and meta keep their own line — the
+           number that is owed is unmissable from standing height without
+           crowding the bar that carries it. */
+        readonly property int posTotal:   Math.round(54 * tokens.fontScale)
+        /* The cart line's own figure. Not `amount`: 34px on a 78px row crowded
+           the name off its own line and rivalled the transaction total under it.
+           19 is prominent at arm's length and visibly subordinate to posTotal —
+           the line is one of six, the total is the one that is owed. */
+        readonly property int lineTotal:  Math.round(19 * tokens.fontScale)
     }
 
     readonly property QtObject spacing: QtObject {

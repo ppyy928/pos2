@@ -1,75 +1,68 @@
 import QtQuick
 import QtQuick.Controls as QC
 import QtQuick.Layouts
+import QtQuick.Templates as T
 import FluentControls
 import Mizan
 
 /*
- * The front door.
+ * The front door: two zones, one composition.
  *
- *   ┌────────────────────────────────────────────────┐
- *   │ ▣ MIZAN POS                                    │  wordmark, over the backdrop
- *   │                                                │
- *   │      ___       ┌──────────────┐                │
- *   │     |o o|      │  Store Login │                │
- *   │     |___|      │  [username]  │                │  one card, one column
- *   │      / \       │  [password]  │                │
- *   │   a counter    │  [ Login   ] │                │
- *   │   terminal     │  En Fr ع     │                │
- *   │                └──────────────┘                │
- *   │ Version 2.4                                    │
- *   └────────────────────────────────────────────────┘
+ *   ┌────────────────────────────────────┬───────────────────────┐
+ *   │  (brand field, ~58%)               │  (form zone, ~42%)    │
+ *   │  deep navy → petrol, with an       │  white surface        │
+ *   │  abstract composition of shelves   │                       │
+ *   │  and a receipt, drawn low-opacity  │  Sign in              │
+ *   │                                    │  Use your operator …  │
+ *   │  ▣ MIZAN POS                       │  USERNAME             │
+ *   │  Sales and inventory, in balance.  │  [person _________ ]  │
+ *   │                                    │  PASSWORD             │
+ *   │                                    │  [lock _________ 👁 ] │
+ *   │                                    │  ⚠ Invalid …          │
+ *   │                                    │  [      Sign in    ]  │
+ *   │                                    │  ─────────────────    │
+ *   │                                    │  Language [English ▾] │
+ *   │                                    │  Version 2.4 — …      │
+ *   └────────────────────────────────────┴───────────────────────┘
  *
- * WHAT CHANGED, AND WHY
+ * A DOOR, NOT A LANDING PAGE — AND NOT A BLANK CANVAS
  *
- * This was a 1040x640 card split into a white form panel and a dark brand panel
- * carrying a hand-drawn shopping bag (a Canvas composition, since deleted).
- * That layout existed to work around a real constraint — a flush two-pane split
- * cannot be done here, because `clip: true` on a rounded Rectangle clips
- * rectangularly and a square-cornered pane pokes out through the rounded corner —
- * and the workaround was a panel floating inside a card, which is two nested
- * surfaces to say one thing.
+ * The two versions this screen has been through sat at either extreme: a
+ * storefront illustration with a marketing headline behind the form, and a
+ * pale canvas with a lonely card floating in the middle of it. The first
+ * answered a question the operator had already answered by opening the app;
+ * the second had no product in it at all. This one is the middle the brief
+ * asks for: a deliberately composed brand field whose geometry — organised
+ * blocks in a disciplined grid, a receipt's ruled lines — says "retail
+ * software" without illustrating a supermarket, and a clean white
+ * authentication surface that carries the whole form.
  *
- * Dropping the split panel removed that problem: the backdrop is the whole window,
- * so there are no panes to align and no corners to reconcile; the form is one card
- * in the middle of it; and the brand mark moves out onto the backdrop where it has
- * room.
+ * The background is drawn, not downloaded: layered rectangles at low alpha,
+ * no runtime image fetch, nothing to fail. The emerald light rises from the
+ * lower right of a navy-to-petrol run, so the composition never fades into
+ * the dead black the old gradient left at the bottom.
  *
- * The Canvas that drew the bag is gone with it: hand-drawing the mark is the thing
- * being replaced, and a file nothing referenced was one more place to look.
+ * SMALLER WINDOWS
  *
- * THE BACKDROP
+ * Below ~940px the brand field becomes a full-bleed backdrop and the form
+ * floats on it as a card — the composition stays visible around the card, so
+ * the character survives; the card carries a compact brand row, because it
+ * is then the only brand on screen.
  *
- * The gradient, plus one illustration beside the card: `assets/storefront.svg` — a
- * shop, seen from the pavement. Awning, sign, stocked window, open door, crates out
- * front. Drawn here rather than borrowed, in the app's own palette; provenance and the
- * reason the colours are baked into the file are in assets/CREDITS.md.
+ * WHAT STAYED
  *
- * It replaces a stock drawing of a phone being tapped on a card reader (unDraw's
- * "Mobile payments"), which was itself a replacement for a blurred photograph of a
- * market street. Both were about paying; neither was about a shop. The people who log
- * into this are standing behind a counter in one, and a picture of the thing they are
- * standing in is the only one that says "this is your shop's till" before a single word
- * is read. The photograph had a second problem: the blur was baked into the file
- * because this build has no run-time blur (QtQuick.Effects / MultiEffect is not
- * verified present, which is why nothing in FluentPySide has a shadow either), and it
- * cost 178KB of JPEG against 6KB of vector.
+ * The auth contract is untouched: `app.auth.login(username, password)` off
+ * the GUI thread (PBKDF2 at 600 000 iterations), `succeeded(user)`,
+ * `failed("")` for bad credentials and a verbatim message for a broken
+ * database, `busy` while the hash runs. The username survives a failed
+ * attempt; the password is selected for retyping. Enter submits. Switching
+ * language retranslates and flips the layout direction live — the two zones
+ * swap sides with everything else.
  *
- * The scrim stays QML, so the darkening can be retuned for a theme without touching
- * an asset; it is what keeps the wordmark and the version stamp legible.
+ * A NOTE ON CAPS LOCK
  *
- * A missing or unreadable asset leaves the gradient, because a login screen that
- * cannot be logged into is the one failure it may not have.
- *
- * DEPTH WITHOUT SHADOWS
- *
- * Unchanged from the port: FluentPySide has no shadow idiom anywhere, so the card
- * separates from the backdrop with surface contrast, a 1px border and a rim
- * highlight along its top edge.
- *
- * Card surfaces come from Tokens.login* rather than Fluent.cardBackground: those
- * are translucent by design — they are meant to sit over Mica — and a translucent
- * card over anything with contrast in it is an unreadable card.
+ * QML cannot query the keyboard's Caps Lock state — QKeyEvent exposes it only
+ * to C++ event filters — so no indicator is drawn rather than a guessed one.
  */
 Item {
     id: page
@@ -78,11 +71,18 @@ Item {
     /* Carries the employee dict from db.authenticate():
        { id, name, username, role, permissions }. */
     signal authenticated(var user)
-    signal closeRequested()
 
     // --------------------------------------------------------------- metrics
-    readonly property int cardWidth: 460
+    /* Below this width the two zones collapse into backdrop + card. */
+    readonly property bool wide: page.width >= 940
+    readonly property int formWidth: 400
+    readonly property int formPadding: 40
     readonly property int gutter: Tokens.size.pagePadding
+
+    /* The brand field's share of a wide window. 58/40 with a little slack,
+       per the brief: enough field for the composition to breathe, enough
+       surface for the form to sit comfortably. */
+    readonly property real brandShare: 0.58
 
     // Room for the leading icon inside a field, and for the trailing reveal
     // button. Named because both fields and both mirror cases refer to them.
@@ -95,8 +95,9 @@ Item {
     readonly property bool busy: auth ? auth.busy : false
     property string errorText: ""
 
-    /* Index order must match the Segmented labels below. */
+    /* Index order must match the ComboBox model below. */
     readonly property var languages: ["en", "fr", "ar"]
+    readonly property var languageLabels: ["English", "Français", "العربية"]
 
     function languageIndex() {
         var i = languages.indexOf(Strings.language)
@@ -108,10 +109,10 @@ Item {
             return
 
         var username = usernameField.text.trim()
-        /* An empty field moves focus and says nothing else. The placeholder
-           already states what goes there, and the alternative — inventing
-           "Enter your username." — would mean three new catalogue entries in
-           three languages to say what a blinking cursor already says. */
+        /* An empty field moves focus and says nothing else. The label already
+           states what goes there, and the alternative — inventing "Enter your
+           username." — would mean three new catalogue entries in three
+           languages to say what a blinking cursor already says. */
         if (username === "") {
             usernameField.forceActiveFocus()
             return
@@ -149,6 +150,9 @@ Item {
         }
 
         function onFailed(message) {
+            /* One sentence, and it never says which half was wrong: "invalid
+               username" tells an attacker the username exists. The username is
+               left as typed so a typo is visible to its author. */
             page.errorText = (message && message !== "")
                 ? message
                 : Strings.t("login.error", "Invalid username or password.")
@@ -158,22 +162,20 @@ Item {
     }
 
     /* Explicit, because a default button does not fire while a text field holds
-       focus — the same reason pos installs QShortcuts on this screen. */
+       focus — the same reason the POS page installs QShortcuts. */
     Shortcut {
         sequences: ["Return", "Enter"]
         enabled: page.visible
         onActivated: page.submit()
     }
-    Shortcut {
-        sequence: "Escape"
-        enabled: page.visible
-        onActivated: page.closeRequested()
-    }
 
     Component.onCompleted: usernameField.forceActiveFocus()
 
-    /* Small caps field label. Both fields use it, so the type treatment cannot
-       drift between them. Declared before its first use: an inline component
+    // ---------------------------------------------------------------- pieces
+    /* Small field label above a field. Both fields use it, so the type
+       treatment cannot drift between them. Caps and letter-spacing are the
+       Fluent label convention; `overline` is 13px, a label size and not a
+       content size. Declared before its first use: an inline component
        referenced above its own declaration is not reliably resolved. */
     component FieldLabel: QC.Label {
         Layout.fillWidth: true
@@ -182,212 +184,378 @@ Item {
         font.weight: Font.DemiBold
         font.capitalization: Font.AllUppercase
         font.letterSpacing: 0.8
-        color: Fluent.textSecondary
-    }
-
-    // ------------------------------------------------------------------------
-    // Backdrop
-    // ------------------------------------------------------------------------
-    /* The whole window, and now the only backdrop: the gradient this screen was
-       designed around. What sits on it is a drawing of the thing this program is,
-       not a photograph of a street it might stand in. */
-    Rectangle {
-        anchors.fill: parent
-        gradient: Gradient {
-            GradientStop { position: 0.0;  color: Qt.lighter(Tokens.loginFrom, 1.25) }
-            GradientStop { position: 0.42; color: Tokens.loginFrom }
-            GradientStop { position: 1.0;  color: Tokens.loginTo }
-        }
+        color: Tokens.workspace.textSub
     }
 
     /*
-     * The illustration: the shop this till stands in.
+     * THE PRIMARY ACTION, DRAWN RATHER THAN STYLED.
      *
-     * A storefront — awning, sign board, a window with stock on the shelves, an open
-     * door, crates on the pavement. What was here before was a stock drawing of a card
-     * being tapped and, before that, a blurred market street: one said "paying
-     * happens", the other said "somewhere busy", and neither said "this is your shop".
-     * The person logging in is standing in the thing on the left.
-     *
-     * `assets/storefront.svg`, drawn for this screen in the app's own palette: light
-     * shapes and brand emerald, nothing darker than the sign board, because the file's
-     * colours are what get drawn — QML cannot tint an SVG's internals at run time — and
-     * anything near-black would disappear into the bottom of the gradient. Provenance in
-     * assets/CREDITS.md.
-     *
-     * It sits on the LEADING side, beside the card, never behind it: on a narrow
-     * window there is no room for both, and a picture under a login form is a
-     * picture nobody sees. `anchors.left` is mirrored to the right in Arabic by the
-     * root's LayoutMirroring, so there is nothing to reverse by hand.
+     * The Fluent style's `highlighted` fill follows Fluent.accent, which
+     * run.py points at the brand — but the button's own label, hover, pressed
+     * and busy states are worth owning here, and PayButton/ChromeButton are
+     * the app's precedent for a drawn button. Filled in the one emerald, with
+     * white ink (4.5:1+ at this size), a focus ring drawn OUTSIDE the fill so
+     * it stays visible, and a busy state that changes the word rather than
+     * faking a spinner whose colour would match the fill exactly.
      */
-    Image {
-        id: artwork
-        objectName: "loginArtwork"
+    component SignInButton: T.AbstractButton {
+        id: primary
 
-        /* Space on one side of the centred card, less the gutters. Below `minRoom`
-           the illustration is not shrunk into a smudge — it is dropped. */
-        readonly property real sideRoom:
-            (page.width - page.cardWidth) / 2 - page.gutter * 2
-        readonly property real minRoom: 260
+        implicitHeight: Tokens.size.command
+        hoverEnabled: true
+        focusPolicy: Qt.StrongFocus
 
-        source: "../assets/storefront.svg"
-        visible: sideRoom >= minRoom
-        anchors.left: parent.left
-        anchors.leftMargin: page.gutter
-        anchors.verticalCenter: parent.verticalCenter
-        /* Nudged up by the version stamp's band so the pavement does not sit in the
-           darkest part of the scrim. */
-        anchors.verticalCenterOffset: -Tokens.size.command / 2
+        Accessible.role: Accessible.Button
+        Accessible.name: text
 
-        width: Math.min(520, Math.max(0, sideRoom))
-        fillMode: Image.PreserveAspectFit
-        /* An SVG is rasterised at `sourceSize`, so it is given twice the width it is
-           ever drawn at: Qt then downscales, which is the case its default filtering
-           handles well, and the raster stays sharp on a 2x display. */
-        sourceSize.width: 1040
-        asynchronous: true
-        cache: true
-        opacity: status === Image.Ready && visible ? 1 : 0
-        Behavior on opacity {
-            NumberAnimation { duration: Fluent.anim.speed }
-        }
-    }
-
-    /*
-     * The scrim: one layer now, not two.
-     *
-     * The flat tint that used to sit here existed to put a floor under a photograph
-     * — to cap how bright its lightest part could be. There is no photograph to cap
-     * any more, and over a gradient it only muddied the brand colour. What remains
-     * is the top-and-bottom darkening, which is what keeps the wordmark and the
-     * version stamp legible; both live in bands where the gradient is at its
-     * lightest.
-     */
-    Rectangle {
-        anchors.fill: parent
-        gradient: Gradient {
-            GradientStop { position: 0.0;  color: Qt.rgba(0, 0, 0, 0.42) }
-            GradientStop { position: 0.32; color: Qt.rgba(0, 0, 0, 0.06) }
-            GradientStop { position: 0.74; color: Qt.rgba(0, 0, 0, 0.12) }
-            GradientStop { position: 1.0;  color: Qt.rgba(0, 0, 0, 0.52) }
-        }
-    }
-
-    // ------------------------------------------------------------------------
-    // Wordmark, over the backdrop
-    // ------------------------------------------------------------------------
-    RowLayout {
-        id: wordmark
-        anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.margins: page.gutter
-        spacing: Tokens.spacing.md
-
-        Rectangle {
-            implicitWidth: 48
-            implicitHeight: 48
+        background: Rectangle {
             radius: Tokens.radius.md
-            color: Tokens.brand
+            /* Disabled is a neutral grey from Tokens, not the style: the
+               style defines no controlFillDisabled, and a binding that names
+               a missing property silently keeps the emerald — a busy button
+               that never looked busy. */
+            color: !primary.enabled ? Tokens.disabledFill
+                   : primary.down ? Tokens.brandPressed
+                   : primary.hovered ? Tokens.brandHover
+                   : Tokens.brand
+            Behavior on color {
+                ColorAnimation { duration: Fluent.anim.appearance }
+            }
 
-            Icon {
-                anchors.centerIn: parent
-                icon: "ic_fluent_cart_20_regular"
-                size: Tokens.icon.lg
-                color: Tokens.onBrand
+            /* Focus outside the fill, where it is visible against any state —
+                the same construction PayButton uses on the dark dock. */
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -3
+                radius: parent.radius + 3
+                color: "transparent"
+                border.width: 2
+                border.color: Tokens.brand
+                visible: primary.visualFocus
             }
         }
 
-        ColumnLayout {
-            spacing: 0
-
-            /* The product name comes from the catalogue, not a literal, so there is
-               one place to change it. Note that the catalogue says "DZ-Retail POS"
-               while the window title, the app id and this folder all say MIZAN —
-               that disagreement predates this port and is settled in i18n.py. */
-            QC.Label {
-                text: Strings.t("app.name", "DZ-Retail POS")
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.subtitle
-                font.weight: Font.Bold
-                font.letterSpacing: 1.2
-                color: Tokens.onChrome
-            }
-
-            QC.Label {
-                text: Strings.t("app.tagline", "Enterprise Smart Management System")
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.caption
-                color: Tokens.onChromeMuted
-            }
+        contentItem: Text {
+            text: primary.text
+            font.family: Tokens.font.family
+            font.pixelSize: Tokens.font.bodyLarge
+            font.weight: Font.DemiBold
+            color: primary.enabled ? Tokens.onBrand : Fluent.textDisabled
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
         }
-
-        Item { Layout.fillWidth: true }
     }
 
-    // ------------------------------------------------------------------------
-    // The card
-    // ------------------------------------------------------------------------
+    // ------------------------------------------------------------------ view
+    /*
+     * THE BRAND FIELD
+     *
+     * A wide window gives it 58% and the form the rest; a narrow one lets it
+     * become the full-bleed backdrop with the form as a card floating on it.
+     * Either way it is the same surface: the navy→petrol run, the emerald
+     * light, the drawn composition, and (wide only) the brand block.
+     */
     Rectangle {
-        id: card
+        id: brandField
 
-        anchors.centerIn: parent
-        width: Math.min(parent.width - page.gutter * 2, page.cardWidth)
-        /* Sized by its contents, floored so a short form does not look like a
-           fragment, and capped so it never collides with the wordmark or the
-           version line on a short window. */
-        height: Math.min(parent.height - page.gutter * 2 - 2 * Tokens.size.command,
-                         Math.max(420, form.implicitHeight + 2 * Tokens.spacing.xxl))
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: page.wide ? Math.round(parent.width * page.brandShare)
+                         : parent.width
 
-        radius: Tokens.radius.lg
-        color: Tokens.loginSurface
-        border.width: 1
-        border.color: Tokens.loginBorder
-
-        /* Rim light along the top edge — the library's own way of suggesting depth
-           where it has no shadow. Inset by the corner radius so it stops before the
-           rounding rather than crossing it. */
-        Rectangle {
-            anchors.top: parent.top
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.margins: parent.radius
-            height: 1
-            color: Tokens.loginRim
-            opacity: Tokens.isDark ? 1.0 : 0.7
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: Tokens.loginFrom }
+            GradientStop { position: 0.55; color: Tokens.loginMid }
+            GradientStop { position: 1.0; color: Tokens.loginTo }
         }
+
+        /* The emerald light — restrained, and rising from the lower right
+           where the composition sits, so the petrol end of the gradient is
+           where the eye lands rather than where the screen dies. */
+        Rectangle {
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            width: Math.round(parent.width * 0.85)
+            height: Math.round(parent.height * 0.75)
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: "transparent" }
+                GradientStop { position: 1.0; color: "#2A087F5B" }
+            }
+        }
+
+        /* Soft horizontal shelf lines behind everything: the boards the
+           blocks sit on, at the lowest alpha that still registers. */
+        Column {
+            anchors.fill: parent
+            spacing: 78
+            Repeater {
+                model: 6
+                delegate: Rectangle {
+                    width: parent.width
+                    height: 1
+                    color: "#14FFFFFF"
+                }
+            }
+        }
+
+        /*
+         * THE SHELF WALL — organised inventory blocks, right of centre.
+         *
+         * A disciplined grid of rounded rectangles at low alpha, a few of
+         * them carrying a faint emerald fill as if stocked. This is the whole
+         * illustration: no clipart, no carts, no statistics.
+         */
+        Grid {
+            id: shelfWall
+
+            anchors.right: parent.right
+            anchors.rightMargin: 72
+            anchors.verticalCenter: parent.verticalCenter
+            columns: 3
+            columnSpacing: 14
+            rowSpacing: 14
+
+            Repeater {
+                model: 12
+
+                delegate: Rectangle {
+                    /* A deterministic sprinkle of "stocked" cells — not a
+                       random one, so the composition is identical on every
+                       launch and in every screenshot. */
+                    readonly property bool lit: index % 5 === 2
+
+                    width: 92
+                    height: 64
+                    radius: 8
+                    color: lit ? "#1A3ECF7A" : "#0DFFFFFF"
+                    border.width: 1
+                    border.color: lit ? "#593ECF7A" : "#2A97B4D6"
+                }
+            }
+        }
+
+        /*
+         * THE RECEIPT — a tall ruled column beside the shelves.
+         *
+         * Lines of varying width ending in two emerald ones, which is what a
+         * receipt is: items, then the total. Drawn at 70% so it reads as a
+         * layer of the composition and not as a control.
+         */
+        Rectangle {
+            anchors.right: shelfWall.left
+            anchors.rightMargin: 56
+            anchors.verticalCenter: parent.verticalCenter
+            width: 124
+            height: 312
+            radius: 10
+            color: "#B30D2536"
+            border.width: 1
+            border.color: "#26FFFFFF"
+
+            Column {
+                anchors.fill: parent
+                anchors.margins: 16
+                spacing: 12
+
+                Repeater {
+                    /* [width-fraction, is-total] — the last two lines are the
+                       receipt's answer, in the brand's green. */
+                    model: [[0.92, 0], [0.55, 0], [0.78, 0], [0.60, 0],
+                            [0.88, 0], [0.45, 0], [0.96, 1], [0.70, 1]]
+
+                    delegate: Rectangle {
+                        required property var modelData
+
+                        readonly property bool isTotal: modelData[1] === 1
+
+                        width: Math.round((parent.width) * modelData[0])
+                        height: 5
+                        radius: 2.5
+                        color: isTotal ? "#5E3ECF7A" : "#2EFFFFFF"
+                    }
+                }
+            }
+        }
+
+        /* THE BRAND BLOCK — the mark, the name, one quiet line. Wide windows
+           only; a narrow window's card carries its own compact row, and the
+           two must never both be on screen. */
+        ColumnLayout {
+            visible: page.wide
+            anchors.left: parent.left
+            anchors.leftMargin: 72
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Tokens.spacing.lg
+
+            RowLayout {
+                spacing: Tokens.spacing.md
+
+                Rectangle {
+                    Layout.alignment: Qt.AlignVCenter
+                    implicitWidth: Tokens.icon.xl
+                    implicitHeight: Tokens.icon.xl
+                    radius: Tokens.radius.md
+                    color: Tokens.brand
+
+                    Icon {
+                        anchors.centerIn: parent
+                        icon: "ic_fluent_cart_20_regular"
+                        size: Tokens.icon.lg
+                        color: Tokens.onBrand
+                    }
+                }
+
+                /* The name the window's title bar carries — the same words in
+                   the same weight, so the product identifies itself once. The
+                   catalogue's `app.name` ("DZ-Retail POS") is not drawn on
+                   this screen: two names on one door is a contradiction, not
+                   a hierarchy. */
+                Text {
+                    Layout.alignment: Qt.AlignVCenter
+                    text: Strings.t("app.product", "MIZAN POS")
+                    font.family: Tokens.font.family
+                    font.pixelSize: 30
+                    font.weight: Font.Bold
+                    font.letterSpacing: 0.8
+                    color: "#FFFFFF"
+                }
+            }
+
+            Text {
+                Layout.leftMargin: 2
+                text: Strings.t("login.tagline",
+                                "Sales and inventory, in balance.")
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.body
+                color: "#9FB3C8"
+            }
+        }
+    }
+
+    /*
+     * THE FORM SURFACE
+     *
+     * Wide: a white zone filling the remainder of the window, its form
+     * constrained to a comfortable 400px and centred. Narrow: a card floating
+     * on the brand field, with the composition still visible around it — the
+     * brief's "background around the form" rather than a blank canvas.
+     */
+    Rectangle {
+        id: formPanel
+
+        color: Tokens.loginSurface
+        border.width: page.wide ? 0 : 1
+        border.color: Tokens.workspace.border
+        radius: page.wide ? 0 : Tokens.radius.lg
+
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+
+        state: page.wide ? "zone" : "card"
+        states: [
+            State {
+                name: "zone"
+                AnchorChanges {
+                    target: formPanel
+                    anchors.left: brandField.right
+                    anchors.right: page.right
+                }
+            },
+            State {
+                name: "card"
+                AnchorChanges {
+                    target: formPanel
+                    anchors.left: undefined
+                    anchors.right: undefined
+                    anchors.horizontalCenter: page.horizontalCenter
+                    anchors.verticalCenter: page.verticalCenter
+                }
+                PropertyChanges {
+                    target: formPanel
+                    width: Math.min(page.width - 2 * page.gutter, 440)
+                    height: Math.min(page.height - 2 * page.gutter,
+                                     form.implicitHeight + 2 * page.formPadding)
+                }
+            }
+        ]
 
         ColumnLayout {
             id: form
-            anchors.fill: parent
-            anchors.margins: Tokens.spacing.xxl
+
+            anchors.centerIn: parent
+            width: Math.min(parent.width - 2 * page.formPadding, page.formWidth)
             spacing: Tokens.spacing.md
 
-            Item { Layout.fillHeight: true }
-
-            QC.Label {
+            // -- compact identity, on the card only
+            /* A narrow window has no brand field, so the card says the name
+               once, quietly. On a wide window the brand field already said it
+               and this row is absent — never twice. */
+            RowLayout {
                 Layout.fillWidth: true
-                text: Strings.t("login.title", "Store Login")
+                visible: !page.wide
+                spacing: Tokens.spacing.sm
+
+                Rectangle {
+                    Layout.alignment: Qt.AlignVCenter
+                    implicitWidth: Tokens.icon.lg
+                    implicitHeight: Tokens.icon.lg
+                    radius: Tokens.radius.sm
+                    color: Tokens.brand
+
+                    Icon {
+                        anchors.centerIn: parent
+                        icon: "ic_fluent_cart_20_regular"
+                        size: Tokens.icon.sm
+                        color: Tokens.onBrand
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignVCenter
+                    text: Strings.t("app.product", "MIZAN POS")
+                    font.family: Tokens.font.family
+                    font.pixelSize: Tokens.font.bodyLarge
+                    font.weight: Font.Bold
+                    font.letterSpacing: 0.4
+                    color: Tokens.workspace.text
+                }
+            }
+
+            // -- heading and one functional line
+            Text {
+                Layout.fillWidth: true
+                Layout.topMargin: page.wide ? 0 : Tokens.spacing.md
+                text: Strings.t("login.heading", "Sign in")
                 font.family: Tokens.font.family
                 font.pixelSize: Tokens.font.title
                 font.weight: Font.DemiBold
-                color: Fluent.textPrimary
+                color: Tokens.workspace.text
             }
 
-            QC.Label {
+            Text {
                 Layout.fillWidth: true
-                Layout.bottomMargin: Tokens.spacing.sm
-                text: Strings.t("login.subtitle", "Access your store account")
+                text: Strings.t("login.heading.support",
+                                "Use your operator account to access the register.")
                 font.family: Tokens.font.family
                 font.pixelSize: Tokens.font.body
-                color: Fluent.textSecondary
+                color: Tokens.workspace.textSub
                 wrapMode: Text.WordWrap
             }
 
+            // -- the fields
             FieldLabel {
+                Layout.topMargin: Tokens.spacing.xs
                 text: Strings.t("login.username", "Username")
             }
 
+            /* The field's own frame is drawn here rather than taken from the
+               style, so the focus treatment is the emerald the rest of the
+               app uses — a blue focus ring on an emerald screen was one of
+               the loudest complaints about the version this replaces, and the
+               style's ring follows a token this screen should not depend on.
+               The same construction PaymentEntry's amount field uses. */
             QC.TextField {
                 id: usernameField
                 Layout.fillWidth: true
@@ -396,15 +564,28 @@ Item {
                 font.pixelSize: Tokens.font.body
                 placeholderText: Strings.t("login.username.ph",
                                            "Enter operator username")
+                Accessible.name: Strings.t("login.username", "Username")
                 /* Padding does not mirror by itself the way anchors do, so the
                    gutter has to change sides explicitly for Arabic. It asks
-                   Strings.rtl rather than `mirrored`: that flag belongs to Control,
-                   and TextField descends from TextInput instead — reading it here is
-                   a ReferenceError at run time, not a compile error. FilterBar's
-                   fields ask the same question. */
+                   Strings.rtl rather than `mirrored`: that flag belongs to
+                   Control, and TextField descends from TextInput instead —
+                   reading it here is a ReferenceError at run time, not a
+                   compile error. FilterBar's fields ask the same question. */
                 leftPadding: Strings.rtl ? Tokens.spacing.md : page.fieldIconGutter
                 rightPadding: Strings.rtl ? page.fieldIconGutter : Tokens.spacing.md
                 onAccepted: page.submit()
+
+                background: Rectangle {
+                    radius: Tokens.radius.md
+                    color: Tokens.workspace.surface
+                    border.width: usernameField.activeFocus ? 2 : 1
+                    border.color: usernameField.activeFocus
+                                  ? Tokens.brand : Tokens.workspace.border
+
+                    Behavior on border.color {
+                        ColorAnimation { duration: 120; easing.type: Easing.OutCubic }
+                    }
+                }
 
                 Icon {
                     anchors.verticalCenter: parent.verticalCenter
@@ -412,7 +593,8 @@ Item {
                     anchors.leftMargin: Tokens.spacing.md
                     icon: "ic_fluent_person_20_regular"
                     size: Tokens.icon.sm
-                    color: parent.activeFocus ? Fluent.accent : Fluent.textSecondary
+                    color: parent.activeFocus ? Tokens.brand
+                                              : Tokens.workspace.textSub
                 }
             }
 
@@ -431,9 +613,22 @@ Item {
                 font.pixelSize: Tokens.font.body
                 echoMode: revealed ? TextInput.Normal : TextInput.Password
                 placeholderText: Strings.t("login.password.ph", "Enter password")
+                Accessible.name: Strings.t("login.password", "Password")
                 leftPadding: Strings.rtl ? page.fieldActionGutter : page.fieldIconGutter
                 rightPadding: Strings.rtl ? page.fieldIconGutter : page.fieldActionGutter
                 onAccepted: page.submit()
+
+                background: Rectangle {
+                    radius: Tokens.radius.md
+                    color: Tokens.workspace.surface
+                    border.width: passwordField.activeFocus ? 2 : 1
+                    border.color: passwordField.activeFocus
+                                  ? Tokens.brand : Tokens.workspace.border
+
+                    Behavior on border.color {
+                        ColorAnimation { duration: 120; easing.type: Easing.OutCubic }
+                    }
+                }
 
                 Icon {
                     anchors.verticalCenter: parent.verticalCenter
@@ -441,13 +636,13 @@ Item {
                     anchors.leftMargin: Tokens.spacing.md
                     icon: "ic_fluent_lock_closed_20_regular"
                     size: Tokens.icon.sm
-                    color: parent.activeFocus ? Fluent.accent : Fluent.textSecondary
+                    color: parent.activeFocus ? Tokens.brand
+                                              : Tokens.workspace.textSub
                 }
 
                 /* A MouseArea rather than a ToolButton: it is how the library
-                   builds its own controls, and it keeps the hit target at exactly
-                   40 inside a 48 field instead of inheriting a styled button's
-                   implicit size. */
+                   builds its own controls, and it keeps the hit target at
+                   exactly 40 inside a 48 field. */
                 Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.right: parent.right
@@ -455,7 +650,8 @@ Item {
                     width: Tokens.size.controlSmall
                     height: Tokens.size.controlSmall
                     radius: Tokens.radius.sm
-                    color: revealArea.containsMouse ? Fluent.subtleSecondary : "transparent"
+                    color: revealArea.containsMouse
+                           ? Tokens.workspace.inset : "transparent"
                     opacity: revealArea.pressed ? 0.6 : 1.0
 
                     Icon {
@@ -464,7 +660,7 @@ Item {
                             ? "ic_fluent_eye_off_20_regular"
                             : "ic_fluent_eye_20_regular"
                         size: Tokens.icon.sm
-                        color: Fluent.textSecondary
+                        color: Tokens.workspace.textSub
                     }
 
                     MouseArea {
@@ -474,108 +670,122 @@ Item {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: passwordField.revealed = !passwordField.revealed
                     }
+
+                    QC.ToolTip {
+                        text: passwordField.revealed
+                              ? Strings.t("login.hide_password", "Hide password")
+                              : Strings.t("login.show_password", "Show password")
+                        visible: revealArea.containsMouse
+                        delay: 400
+                    }
                 }
             }
 
-            /* InfoBar hard-binds `width: parent.width`, which fights
-               Layout.fillWidth if it goes into a layout directly. This wrapper is
-               what the layout manages; the bar fills it. */
-            Item {
+            // -- inline error, only ever about what just happened
+            RowLayout {
                 Layout.fillWidth: true
                 Layout.topMargin: visible ? Tokens.spacing.xs : 0
-                Layout.preferredHeight: visible ? errorBar.height : 0
                 visible: page.errorText !== ""
+                spacing: Tokens.spacing.sm
 
-                /* No title. InfoBar hides its title Label when the string is empty,
-                   and the body already says the whole thing — a heading above it
-                   would only be a second invented string saying "that failed"
-                   twice. */
-                InfoBar {
-                    id: errorBar
-                    severity: Severity.error
+                Icon {
+                    Layout.alignment: Qt.AlignTop
+                    icon: "ic_fluent_error_circle_20_regular"
+                    size: Tokens.icon.sm
+                    color: Tokens.danger
+                    /* Nudged down so the glyph's optical centre lines up with
+                       the first text line, not its bounding box. */
+                    Layout.topMargin: 2
+                }
+
+                Text {
+                    Layout.fillWidth: true
                     text: page.errorText
-                    closable: false
-                    timeout: -1
+                    wrapMode: Text.WordWrap
+                    font.family: Tokens.font.family
+                    font.pixelSize: Tokens.font.body
+                    color: Tokens.danger
                 }
             }
 
-            QC.Button {
+            // -- the one primary action
+            SignInButton {
                 Layout.fillWidth: true
-                Layout.topMargin: Tokens.spacing.sm
-                Layout.preferredHeight: Tokens.size.command
-                highlighted: true      // accent fill — brand emerald
+                Layout.topMargin: Tokens.spacing.xs
                 enabled: !page.busy
-                font.family: Tokens.font.family
-                font.pixelSize: Tokens.font.bodyLarge
-                font.weight: Font.DemiBold
-                /* Busy shows as text, not a ProgressRing: the ring's colour is
-                   hardcoded to Fluent.accent, which is this button's own fill — an
-                   invisible spinner. */
+                /* The busy word changes and the button refuses a second press
+                   — that is the whole loading state, and it is honest: a
+                   spinner the colour of the fill would be invisible, and a
+                   disabled button that still invited the press would not be
+                   disabled. */
                 text: page.busy
                     ? Strings.t("login.busy", "Signing in…")
-                    : Strings.t("login.submit", "Login")
+                    : Strings.t("login.submit", "Sign in")
                 onClicked: page.submit()
             }
 
-            Item { Layout.fillHeight: true }
-
             Rectangle {
                 Layout.fillWidth: true
-                Layout.topMargin: Tokens.spacing.xs
+                Layout.topMargin: Tokens.spacing.sm
                 implicitHeight: 1
-                color: Fluent.divider
+                color: Tokens.workspace.border
             }
 
-            Segmented {
-                id: langPicker
-                Layout.alignment: Qt.AlignHCenter
-                Layout.topMargin: Tokens.spacing.xs
-                items: ["English", "Français", "العربية"]
+            // -- language, secondary to authentication
+            /* A combo, not a row of three buttons: the setting is a choice
+               between three equally valid options, which is exactly what a
+               ComboBox says, and the row of segments it replaces read as
+               three primary actions competing with Sign in. It sits below the
+               divider, in the form's quietest zone. */
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Tokens.spacing.md
 
-                /* Segmented assigns its own currentIndex from a MouseArea, which
-                   would destroy a binding placed on it — the same trap as
-                   Fluent.setTheme() breaking isDark. So the link to Strings runs
-                   imperatively both ways. It converges: assigning an unchanged
-                   value emits nothing. */
-                onCurrentIndexChanged: Strings.setLanguage(page.languages[currentIndex])
-                Component.onCompleted: currentIndex = page.languageIndex()
-            }
+                Text {
+                    Layout.fillWidth: true
+                    text: Strings.t("login.language", "Language")
+                    font.family: Tokens.font.family
+                    font.pixelSize: Tokens.font.caption
+                    color: Tokens.workspace.textSub
+                }
 
-            Connections {
-                target: Strings
-                function onLanguageChanged() {
-                    langPicker.currentIndex = page.languageIndex()
+                QC.ComboBox {
+                    id: languageBox
+
+                    implicitWidth: 160
+                    font.family: Tokens.font.family
+                    font.pixelSize: Tokens.font.body
+                    model: page.languageLabels
+                    /* Imperative both ways: ComboBox assigns its own
+                       currentIndex from its popup, which would destroy a
+                       binding — the same trap as Segmented, documented on the
+                       old picker. Assigning an unchanged value emits nothing,
+                       so the two converge. */
+                    Component.onCompleted: currentIndex = page.languageIndex()
+                    onActivated: (index) => Strings.setLanguage(page.languages[index])
+
+                    Connections {
+                        target: Strings
+                        function onLanguageChanged() {
+                            languageBox.currentIndex = page.languageIndex()
+                        }
+                    }
                 }
             }
 
-            QC.Button {
-                Layout.alignment: Qt.AlignHCenter
-                Layout.preferredHeight: Tokens.size.controlSmall
-                flat: true             // subtle config, not accent
+            // -- build stamp, at the composition's bottom edge
+            /* What pos puts here, in the quietest ink on the white surface:
+               a version stamp is support information, and the form is for
+               the one thing this screen exists to do. */
+            Text {
+                Layout.fillWidth: true
+                Layout.topMargin: Tokens.spacing.xs
+                text: Strings.t("login.version", "Version 2.4 — Desktop edition")
                 font.family: Tokens.font.family
                 font.pixelSize: Tokens.font.caption
-                text: Strings.t("login.close", "Close")
-                onClicked: page.closeRequested()
+                color: Tokens.workspace.textSub
+                elide: Text.ElideRight
             }
         }
-    }
-
-    // ------------------------------------------------------------------------
-    // Build stamp, over the photograph
-    // ------------------------------------------------------------------------
-    /* What pos puts here. It replaced a shield-and-reassurance row: that would
-       have been a claim about where the data lives, and this screen is not the
-       place to make one the app cannot verify. */
-    QC.Label {
-        anchors.bottom: parent.bottom
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.margins: page.gutter
-        text: Strings.t("login.version", "Version 2.4 — Desktop edition")
-        font.family: Tokens.font.family
-        font.pixelSize: Tokens.font.caption
-        color: Tokens.onChromeMuted
-        horizontalAlignment: Text.AlignLeft
-        elide: Text.ElideRight
     }
 }

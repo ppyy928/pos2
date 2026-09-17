@@ -97,6 +97,13 @@ QC.Popup {
     property real alreadyPaid: 0
     property bool replaces: false
 
+    /* A caller that opens this sheet as THE checkout, not as the partial-payment
+       question, seeds it with the figure it expects: the till's Charge opens it
+       on the whole total, so Confirm is the ordinary cash sale and the sheet is
+       a confirmation of the money rather than a question about it. Zero (the
+       default, and every existing caller) keeps the sheet opening empty. */
+    property real seedAmount: 0
+
     property string confirmText: ""
 
     signal accepted(real amount)
@@ -136,11 +143,14 @@ QC.Popup {
        one answer this dialog is not for — and ALL is one key away for the operator who
        changes their mind.
 
-       An edit is the exception: there the figure already recorded is the safe starting
-       point, because what is typed replaces it. Selected, so the first digit still
-       overwrites rather than appends. */
+       Two exceptions. An edit opens on the figure already recorded, because what is
+       typed replaces it. And a caller that seeded the sheet (`seedAmount`) opens on
+       its seed — Charge's confirmation of the whole total. Both selected, so the
+       first digit still overwrites rather than appends. */
     onOpened: {
-        amount.text = (replaces && alreadyPaid > 0.005) ? plain(alreadyPaid) : ""
+        amount.text = (replaces && alreadyPaid > 0.005)
+                      ? plain(alreadyPaid)
+                      : (seedAmount > 0.005 ? plain(seedAmount) : "")
         amount.forceActiveFocus()
         amount.selectAll()
     }

@@ -23,6 +23,12 @@ from PySide6.QtCore import Property, QObject, Signal, Slot
 
 from .. import diagnostics
 from . import fmt, interop, legacy
+from .till import CATALOGUE_MAX
+
+#: How many of a supplier's last items the delivery's empty note offers. One
+#: strip, not a catalogue: the point is "the usual order again", and a wall of
+#: twelve cards already needs a scroll on a 1320px dialog.
+RECENT_ITEMS_MAX = 12
 
 
 class Purchases(QObject):
@@ -319,6 +325,80 @@ class Purchases(QObject):
     @Slot(float, result=str)
     def moneyText(self, value: float) -> str:
         return fmt.money(value)
+
+    @Slot(int, result="QVariantList")
+    def recentItems(self, supplier_id: int) -> list:
+        """What this supplier last sent, newest first, for the empty note.
+
+        The database has no "this supplier's products" query, and one is not
+        needed: the supplier's last few INVOICES are that list. They are found
+        by the supplier's own name — the purchases search already matches a
+        supplier name in SQL — then each is read back and its items taken in
+        the order the delivery was written. `supplier_id` is checked on every
+        invoice rather than trusting the name search, because two traders can
+        share a word.
+
+        The rows are the till's TILE shape, not invoice lines: the quick-add
+        strip draws the same product card the tile wall draws, and a card
+        needs a name, a price and a shelf — not what was paid a year ago. It
+        is the current catalogue figures, so the card says what tapping it
+        will actually put on the note.
+        """
+        database = self._database()
+        if database is None or int(supplier_id) <= 0:
+            return []
+        try:
+            supplier = database.fetch_supplier(int(supplier_id)) or {}
+            name = str(supplier.get("name") or "")
+            if not name:
+                return []
+
+            wanted = []
+            seen = set()
+            page = database.fetch_purchase_invoices(name, 1, 6)
+            for head in page.get("rows") or []:
+                invoice = database.fetch_purchase_invoice(int(head.get("id")))
+                if not invoice:
+                    continue
+                if int(invoice.get("supplier_id") or 0) != int(supplier_id):
+                    continue
+                for item in invoice.get("items") or []:
+                    pid = int(item.get("product_id") or 0)
+                    if pid <= 0 or pid in seen:
+                        continue
+                    seen.add(pid)
+                    wanted.append(pid)
+                    if len(wanted) >= RECENT_ITEMS_MAX:
+                        break
+                if len(wanted) >= RECENT_ITEMS_MAX:
+                    break
+
+            if not wanted:
+                return []
+
+            catalogue = {}
+            listing = database.fetch_products("", 1, CATALOGUE_MAX, None)
+            for row in listing.get("rows") or []:
+                catalogue[int(row["id"])] = row
+
+            out = []
+            for pid in wanted:
+                row = catalogue.get(pid)
+                if row is None:
+                    continue
+                unit = row.get("unit") or ""
+                out.append({
+                    "id": row["id"],
+                    "name": row.get("name") or "",
+                    "barcode": row.get("barcode") or "",
+                    "price_text": fmt.money(row.get("sale_price")),
+                    "stock": float(row.get("stock") or 0.0),
+                    "stock_text": f"{fmt.qty(row.get('stock'))} {unit}".strip(),
+                })
+            return out
+        except Exception as exc:  # noqa: BLE001
+            self.rejected.emit(str(exc))
+            return []
 
     def _row(self, row: dict) -> dict:
         total = float(row.get("total") or 0.0)

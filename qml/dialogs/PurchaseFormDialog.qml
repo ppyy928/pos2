@@ -9,14 +9,11 @@ import Mizan
  *
  *   ┌────────────────────────────────────────────────────────────────────────┐
  *   │ New delivery                                                          │
- *   │ ┌─ SUPPLIER ─────────────┐  [ scan or search a product ....... ] [▤]  │
- *   │ │ Atlas Distribution     │                                           │
- *   │ │ Karim · Blida          │                                           │
- *   │ └────────────────────────┘                                           │
- *   │ Product              Qty      Cost     Sells        Total            │
- *   │ Atlas Beans           12    250.00    320.00     3 000.00     ✎  ✕   │
- *   │ Atlas Rice            20     80.00    110.00     1 600.00     ✎  ✕   │
- *   │                                                                      │
+ *   │ [ Select supplier (F3) ▾ ] [＋]   [ scan or search a product (F2) ] [▤]│
+ *   │ ┌ LINES 2 ──┐ ┌ TOTAL QTY 32 ┐ ┌ TOTAL COST 14 600.00 ─┐              │
+ *   │ Product              Qty         Cost      Sells       Total           │
+ *   │ Atlas Beans       [− 12 +]     [ 250 ]   [ 320 ]    3 000.00   ✎  🗑   │
+ *   │ Atlas Rice        [− 20 +]     [  80 ]   [ 110 ]    1 600.00   ✎  🗑   │
  *   │ ┌──────────────────────────────────────────────────────────────────┐  │
  *   │ │ 2 lines   TOTAL 4 600.00   Paid [ 1000 ] All   Outstanding 3 600 │  │
  *   │ │                                          [ Save ]  [  Cash  ]    │  │
@@ -30,17 +27,29 @@ import Mizan
  * the cart row could only ever show one of them: it displayed a "price" that was
  * really the cost, with nothing to say so and nowhere to put the selling price at all.
  * Three numbers per row is a table, with a heading over each column saying which is
- * which.
+ * which — and the three figures are edited IN the table (DataTable's stepper and
+ * edit cells, the cart's own − n + among them), because a delivery is mostly
+ * corrections: the cost the rep says out loud, the quantity that came in short.
+ * The pen is still there for the full question — margin, last cost, the shelf —
+ * but the common fix no longer opens a sheet over the row to make it.
  *
- * WHY THERE IS NO KEYPAD ON THIS SCREEN
+ * WHY THE EMPTY NOTE OFFERS THE SUPPLIER'S LAST DELIVERY
  *
- * There was, for editing a line in place — select the row, switch the pad's mode,
- * type, Apply. The entry sheet replaced all of that: it asks the three figures
- * together with its own pad, so a second pad out here would be a second way to do one
- * job, and the row's pen is a shorter path to it than selecting a row and hunting a
- * mode. The one number this screen still takes is what was paid, and that is a field
- * with an "All" beside it — the same shape the customer and supplier payment panels
- * already use.
+ * A standing order is the same goods every week, and "Nothing on this delivery
+ * yet" made the operator rebuild it from the search box every time. With a
+ * supplier attached the empty state shows their last few items as the till's
+ * own product cards, one tap each. Without one it says so: a cash purchase
+ * from the market has no history to offer, and inventing one would be worse
+ * than the sentence.
+ *
+ * WHY THERE IS NO FULL KEYPAD ON THIS SCREEN
+ *
+ * There was, for editing a line in place — select the row, switch the pad's
+ * mode, type, Apply. The entry sheet replaced all of that: it asks the three
+ * figures together with its own pad, and the inline cells above handle the
+ * nudge. The one number this screen still takes as a whole amount is what was
+ * paid, and that is a field with an "All" beside it — the same shape the
+ * customer and supplier payment panels already use.
  */
 AppDialog {
     id: dialog
@@ -52,6 +61,8 @@ AppDialog {
                                      ? app.suppliers : null
     readonly property var stock: (typeof app !== "undefined" && app) ? app.stock : null
     readonly property var session: (typeof app !== "undefined" && app) ? app.session : null
+    readonly property var workflows: (typeof app !== "undefined" && app)
+                                     ? app.workflows : null
 
     readonly property int invoiceId: context && context.invoice_id ? context.invoice_id : 0
     readonly property bool creating: invoiceId === 0
@@ -102,6 +113,18 @@ AppDialog {
     property var matches: []
     property var catalogue: []
 
+    /* What this supplier sent last time — the empty note's quick-add strip,
+       newest first, in the till's tile row shape. Reloaded on every attach:
+       a supplier chosen two minutes ago may have a delivery on file from this
+       morning, and the strip is exactly the "the usual order again" list. */
+    property var recent: []
+
+    /* True from the press on the add-supplier button until the supplier that
+       press is making comes back — the till's own gate around the customer
+       form, for the same reason: `saved` fires for every supplier written
+       anywhere in the app, and only this one belongs on this delivery. */
+    property bool awaitingNewSupplier: false
+
     Component.onCompleted: {
         if (suppliers)
             suppliers.load("")
@@ -126,9 +149,22 @@ AppDialog {
     function attach(supplierId) {
         if (!supplierId || !suppliers) {
             supplier = null
+            recent = []
             return
         }
         supplier = suppliers.supplier(Number(supplierId)) || null
+        recent = (ctrl && supplier) ? ctrl.recentItems(Number(supplierId)) : []
+    }
+
+    /* The form, not the picker: an operator who has decided the supplier is
+       not on file is never handed the list of the ones that are to click
+       through. `supplier_edit` with no id is the empty form; the save lands in
+       the Connections below. */
+    function newSupplier() {
+        if (!workflows || !workflows.open)
+            return
+        awaitingNewSupplier = true
+        workflows.open("supplier_edit", {})
     }
 
     // -- money -------------------------------------------------------------
@@ -143,6 +179,16 @@ AppDialog {
     readonly property real due: Math.max(0, total - paidValue)
     readonly property bool sendable: canManage && lines.length > 0 && total > 0
 
+    /* The sum of the quantities, in the shop's own format — the Total Qty
+       card's figure. Strings, not a number, because the shop's unit text
+       ("12 kg") is the honest way to say it. */
+    readonly property string qtyTotalText: {
+        var sum = 0
+        for (var i = 0; i < lines.length; i++)
+            sum += Number(lines[i].qty)
+        return stock ? stock.qtyText(sum) : String(sum)
+    }
+
     function money(value) {
         return ctrl ? ctrl.moneyText(value) : "—"
     }
@@ -153,8 +199,11 @@ AppDialog {
     }
 
     // -- the note, formatted for the table ---------------------------------
-    /* DataTable renders `row[key]` verbatim, so the strings are built here. The raw
-       numbers stay on `lines`, which is what travels to the bridge. */
+    /* DataTable renders `row[key]` verbatim, so the formatted strings are
+       built here. The RAW figures ride beside them under their own keys —
+       `qty`, `cost`, `sale_price` — because the editable and stepper cells
+       bind to numbers, not to money text: a field holding "1 658,74" is a
+       field its own parser cannot read back. */
     readonly property var noteRows: {
         var out = []
         for (var i = 0; i < lines.length; i++) {
@@ -164,9 +213,9 @@ AppDialog {
             out.push({
                 index: i,
                 name: line.name,
-                qty_text: stock ? stock.qtyText(Number(line.qty)) : String(line.qty),
-                cost_text: money(cost),
-                sale_text: sale > 0 ? money(sale) : "—",
+                qty: Number(line.qty),
+                cost: cost,
+                sale_price: sale,
                 total_text: money(Number(line.qty) * cost),
                 /* A selling price at or under cost is worth pointing at: sometimes
                    deliberate, never accidental on purpose. */
@@ -183,25 +232,27 @@ AppDialog {
             stretch: true
         },
         {
-            key: "qty_text",
+            key: "qty",
             header: Strings.t("purchases.col.qty", "Qty"),
             numeric: true,
-            width: 110,
-            ltr: true
+            /* Wide enough for the cart's own stepper: two 48px keys around a
+               72px field, plus the cell's padding. */
+            width: 220,
+            stepper: true
         },
         {
-            key: "cost_text",
+            key: "cost",
             header: Strings.t("product.purchase_price", "Cost"),
             numeric: true,
             width: 150,
-            ltr: true
+            edit: true
         },
         {
-            key: "sale_text",
+            key: "sale_price",
             header: Strings.t("product.sale_price", "Sells for"),
             numeric: true,
             width: 150,
-            ltr: true,
+            edit: true,
             tone: function (r) { return r.thin ? "danger" : "" }
         },
         {
@@ -302,6 +353,25 @@ AppDialog {
         lines = next
     }
 
+    /* An inline cell edit, in the line's own vocabulary. The table names the
+       columns the way the screen reads them — `cost`, `sale_price`, `qty` —
+       while the document stores the cost as `price`, which is the name
+       `save_purchase_invoice` takes. Whatever comes back is a figure: any
+       edit is clamped at zero, because a negative cost, price or quantity is
+       a typo, not a correction. */
+    function cellEdited(index, key, value) {
+        var figure = Number(value)
+        if (isNaN(figure))
+            return
+        figure = Math.max(0, figure)
+        if (key === "qty")
+            patch(index, { qty: figure })
+        else if (key === "cost")
+            patch(index, { price: figure })
+        else if (key === "sale_price")
+            patch(index, { sale_price: figure })
+    }
+
     function removeLine(index) {
         var next = lines.slice()
         next.splice(index, 1)
@@ -332,6 +402,21 @@ AppDialog {
         function onRejected(message) { error.text = message }
     }
 
+    /* The supplier form saved. Attached by id, the way the customer form's
+       result is on the till: the operator pressed that button to put a name
+       on this delivery, not to file a record. Gated by awaitingNewSupplier,
+       because `saved` fires for every supplier written anywhere. */
+    Connections {
+        target: dialog.suppliers
+        ignoreUnknownSignals: true
+        function onSaved(supplier) {
+            if (!dialog.awaitingNewSupplier || !supplier)
+                return
+            dialog.awaitingNewSupplier = false
+            dialog.attach(supplier.id)
+        }
+    }
+
     // =====================================================================
     // LAYOUT
     // =====================================================================
@@ -353,6 +438,21 @@ AppDialog {
     contentItem: ColumnLayout {
         spacing: Tokens.spacing.sm
 
+        /* F2 and F3, the till's own keys for the same two things: the finder
+           is where a scanner's Return lands, and the supplier list drops open
+           without a trip to the field. Declared as a Keys handler rather than
+           a Shortcut because a Popup is not an Item — the bubbles from
+           whichever child holds focus are what reach this. */
+        Keys.onPressed: (event) => {
+            if (event.key === Qt.Key_F2) {
+                finder.focusSearch()
+                event.accepted = true
+            } else if (event.key === Qt.Key_F3) {
+                supplierSelect.open()
+                event.accepted = true
+            }
+        }
+
         // -----------------------------------------------------------------
         // WHO IT IS FROM, AND WHAT GOES ON IT
         // -----------------------------------------------------------------
@@ -369,18 +469,19 @@ AppDialog {
             spacing: Tokens.spacing.md
 
             PartySelect {
+                id: supplierSelect
                 Layout.fillWidth: true
                 Layout.maximumWidth: 480
                 glyph: "ic_fluent_vehicle_truck_profile_20_regular"
                 active: dialog.supplier !== null
-                title: dialog.supplier ? dialog.supplier.name
-                                       : Strings.t("purchases.no_supplier",
-                                                   "No supplier")
+                title: dialog.supplier
+                       ? dialog.supplier.name
+                       : Strings.t("purchases.supplier.hint",
+                                   "Select supplier (F3)")
                 subtitle: dialog.supplier
                           ? [dialog.supplier.contact, dialog.supplier.wilaya]
                             .filter(function (p) { return p }).join("  ·  ")
-                          : Strings.t("purchases.supplier.hint",
-                                      "Tap to attach a supplier")
+                          : ""
                 removeTip: Strings.t("purchases.supplier.remove", "Remove supplier")
 
                 /* Already in memory: the list is loaded with the dialog, so the
@@ -402,6 +503,20 @@ AppDialog {
                 onRemoveRequested: dialog.supplier = null
             }
 
+            /* ADD A SUPPLIER FROM HERE. The one gesture a delivery needs that
+               the select cannot do — a rep nobody has bought from before
+               walks in — and one that should not cost a trip to the suppliers
+               page and back with the delivery half-entered. Beside the field
+               it serves, where the till also keeps its customer's. */
+            IconButton {
+                Layout.alignment: Qt.AlignTop
+                glyph: "ic_fluent_person_add_20_regular"
+                glyphSize: Tokens.icon.md
+                tooltip: Strings.t("suppliers.add", "New supplier")
+                enabled: dialog.canManage
+                onClicked: dialog.newSupplier()
+            }
+
             /* Vertically centred against the card, which is the taller of the two:
                a search field stretched to a card's height is a field that looks
                broken. */
@@ -409,10 +524,10 @@ AppDialog {
                 id: finder
                 Layout.fillWidth: true
                 Layout.maximumWidth: 620
-                Layout.alignment: Qt.AlignVCenter
+                Layout.alignment: Qt.AlignTop
                 enabled: dialog.canManage
-                placeholder: Strings.t("purchases.finder.ph",
-                                       "Scan or search a product to add it")
+                placeholder: Strings.t("purchases.finder.ph2",
+                                       "Scan or search a product (F2)")
                 results: dialog.matches
                 all: dialog.catalogue
 
@@ -437,11 +552,49 @@ AppDialog {
         }
 
         // -----------------------------------------------------------------
+        // THE RUNNING SUMMARY
+        // -----------------------------------------------------------------
+        /* The same cards the stocktake wears over its sheet, for the same
+           reason: the figures a delivery is steered by should not require
+           scrolling to the dock and reading past the buttons to find. Cost,
+           not value: what this delivery owes, which is the number the
+           operator reconciles with the rep. */
+        CardRow {
+            Layout.fillWidth: true
+            minCardWidth: 220
+
+            KpiCard {
+                glyph: "ic_fluent_receipt_20_regular"
+                value: String(dialog.lines.length)
+                label: Strings.t("purchases.card.lines", "Lines")
+                tone: "info"
+            }
+
+            KpiCard {
+                glyph: "ic_fluent_box_multiple_20_regular"
+                value: dialog.qtyTotalText
+                label: Strings.t("purchases.card.qty", "Total qty")
+                tone: "primary"
+            }
+
+            KpiCard {
+                glyph: "ic_fluent_money_20_regular"
+                value: dialog.money(dialog.total)
+                label: Strings.t("purchases.card.cost", "Total cost")
+                tone: "success"
+            }
+        }
+
+        // -----------------------------------------------------------------
         // THE NOTE
         // -----------------------------------------------------------------
         DataTable {
+            id: noteTable
             Layout.fillWidth: true
             Layout.fillHeight: true
+            /* An empty table is a heading over nothing; the block below is
+               what the note shows until it has a line. */
+            visible: dialog.lines.length > 0
             columns: dialog.columns
             model: dialog.noteRows
             emptyIcon: "ic_fluent_receipt_20_regular"
@@ -450,12 +603,106 @@ AppDialog {
             /* Double-clicking a row is the same as its pen: a row that opens on
                activation is what every other table in this app does. */
             onRowActivated: (row) => dialog.editLine(row)
+            /* The inline cells — qty's stepper, cost and sells' fields. The
+               page owns `lines`; the table only reports what changed. */
+            onCellEdited: (row, key, value) => dialog.cellEdited(row, key, value)
             onActionTriggered: (row, action) => {
                 if (action === "edit")
                     dialog.editLine(row)
                 else if (action === "delete")
                     dialog.removeLine(row)
             }
+        }
+
+        /* THE EMPTY NOTE — a hint, and a way in.
+           "Nothing on this delivery yet" was the whole story; the operator's
+           next move was always the search box. With a supplier attached this
+           shows their last few items as the till's own product cards, one tap
+           each — the standing order is mostly the last order repeated. With no
+           supplier there is no history to offer, and the second line says so
+           rather than showing an empty strip. */
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: dialog.lines.length === 0
+            spacing: Tokens.spacing.sm
+
+            Text {
+                Layout.fillWidth: true
+                text: Strings.t("purchases.empty.hint2",
+                                "Nothing on this delivery yet. Scan a product, search for one, or start from what this supplier sent last time.")
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.body
+                color: Fluent.textSecondary
+                wrapMode: Text.WordWrap
+            }
+
+            Text {
+                Layout.fillWidth: true
+                visible: recentStrip.count === 0
+                text: Strings.t("purchases.empty.no_supplier",
+                                "Attach a supplier and their last items will appear here.")
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.caption
+                color: Fluent.textTertiary
+                wrapMode: Text.WordWrap
+            }
+
+            Text {
+                Layout.fillWidth: true
+                visible: recentStrip.count > 0
+                text: Strings.tf("purchases.recent.title", "Last from {name}",
+                                 { name: dialog.supplier ? dialog.supplier.name : "" })
+                font.family: Tokens.font.family
+                font.pixelSize: Tokens.font.caption
+                font.weight: Font.DemiBold
+                color: Fluent.textSecondary
+                elide: Text.ElideRight
+            }
+
+            /* The strip: horizontal, the till's card, one tap to the entry
+               sheet. Left-aligned and scrolling rather than wrapping — it is
+               a rail of options, not a wall. */
+            ListView {
+                id: recentStrip
+                Layout.fillWidth: true
+                Layout.preferredHeight: Tokens.size.tile + Tokens.spacing.sm
+                visible: count > 0
+                orientation: ListView.Horizontal
+                clip: true
+                spacing: Tokens.spacing.sm
+                model: dialog.recent
+
+                QC.ScrollBar.horizontal: FluentScrollBar {
+                    policy: QC.ScrollBar.AsNeeded
+                }
+
+                delegate: Item {
+                    required property var modelData
+                    width: 210
+                    height: recentStrip.height
+
+                    PosTile {
+                        anchors.centerIn: parent
+                        width: Math.min(parent.width - recentStrip.spacing,
+                                        Tokens.size.tileMax)
+                        height: Tokens.size.tile
+
+                        name: modelData.name
+                        priceText: modelData.price_text
+                        barcode: modelData.barcode !== undefined
+                                 ? modelData.barcode : ""
+                        stock: modelData.stock !== undefined ? modelData.stock : 0
+                        stockText: modelData.stock_text !== undefined
+                                   ? modelData.stock_text : ""
+                        onClicked: dialog.add(modelData)
+                    }
+                }
+            }
+
+            /* Keeps the rail against the hint instead of centred in the
+               table's old space. */
+            Item { Layout.fillHeight: true }
         }
 
         Text {

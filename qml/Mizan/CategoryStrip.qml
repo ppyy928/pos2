@@ -4,36 +4,39 @@ import FluentControls
 import Mizan
 
 /*
- * The till's tab strip: Favourites, then one chip per category. Ported from
- * pos/app/pages/pos.py::_add_chip and pos/app/widgets/h_scroll_strip.py.
+ * The till's category filter row: Favourites, then one chip per category.
+ * Ported from pos/app/pages/pos.py::_add_chip and pos/app/widgets/h_scroll_strip.py.
  *
- *     ‹ [★ Favourites] [▌Drinks] [▌Bakery] [▌Household] ... ›
+ *     │ ‹ [★ Favourites] [• Drinks] [• Bakery] [• Household] … › │
  *
  * WHY THERE IS NO "ALL" CHIP
  *
  * There is no chip that loads the whole catalogue, and that is pos's decision
- * rather than an omission: only the active tab's products are ever fetched, so a
- * shop with four thousand products never builds four thousand tiles. The strip
+ * rather than an omission: only the active tab's products are ever fetched, so
+ * a shop with four thousand products never builds four thousand tiles. The strip
  * is the only way to change what the grid shows, which is why it sits directly
  * above it.
  *
- * WHY THE COLOUR IS A BAR AND A TINT, NEVER THE INK
+ * A WHITE BAR, NOT A FLOATING ROW OF TEXT
  *
- * A category's colour is user data — any hue at any lightness. pos runs it
- * through a contrast helper to pick the text colour; here the colour is used for
- * a leading bar, a border and a faint tint of the surface, and the label stays in
- * the theme's own ink. That way legibility does not depend on what the merchant
- * picked, and a strip of eight categories still reads as one family. Same rule
- * PosTile applies to the same data.
+ * The version this replaces was a row of naked chips on the workspace grey —
+ * category text floating over the product grid with nothing to say where the
+ * filter ended and the goods began. The strip is now its own surface: a white
+ * bar with a structural border, sitting on the grey of the workspace, so the
+ * row reads as the toolbar it is.
  *
- * WHY THE CHEVRONS
+ * WHY THE CHEVRONS RESERVE THEIR SPACE
  *
  * Twenty categories do not fit and a touch screen gives no scrollbar to grab.
  * The chevrons appear only when there is something past the edge, and they move
  * the strip by most of a page rather than a chip at a time — a cashier looking
- * for "Household" is scanning, not stepping.
+ * for "Household" is scanning, not stepping. When the row scrolls, a spacer the
+ * width of a chevron sits at each end of the content, so a chip is never sliced
+ * through its label by the edge of the bar: it is either fully in view or past
+ * it. The space is constant rather than appearing with the arrow, so nothing
+ * jumps when the strip starts or stops scrolling.
  */
-Item {
+Rectangle {
     id: strip
 
     // =====================================================================
@@ -54,12 +57,36 @@ Item {
     // =====================================================================
     // GEOMETRY
     // =====================================================================
-    /* Full control height. These are tapped as often as anything on the screen —
-       a chip strip at a caption's height is the classic thing you cannot hit. */
-    implicitHeight: Tokens.size.control
+    /* A command bar's height, the app's own: the chips are 44px — real
+       targets for a hand that taps them all day — centred with air above
+       and below, and the bar carries its own boundary. */
+    implicitHeight: 56
+    radius: Tokens.radius.sm
+    color: Tokens.workspace.surface
+    border.width: 1
+    border.color: Tokens.workspace.border
 
+    readonly property int chipHeight: 44
     readonly property int chevron: Tokens.size.controlSmall
+    /* Whether the chips need the bar's scroll. Compared against the plain
+       content width — see `endRoom` for why nothing on this side may feed
+       back into it. */
     readonly property bool scrollable: view.contentWidth > view.width
+    /* The end spacer a scrolling strip keeps clear, so no label is ever cut
+       by the bar's edge.
+
+       A CONSTANT, DELIBERATELY. It was once `scrollable ? chevron + xs : 0`
+       — reserved only while scrolling — and that was a binding loop Qt
+       detected on every page load: scrollable reads view.contentWidth, the
+       header and footer size themselves from endRoom, and their width is
+       part of contentWidth, so the three properties form a closed circle
+       (convergent, but Qt flags the shape, not the values). Reserving the
+       room unconditionally breaks the circle: contentWidth no longer
+       depends on anything that reads it. At rest the chips simply get the
+       same breathing room on both ends, and the chevrons arrive exactly
+       when the content would overflow the width that keeps those ends
+       clear. */
+    readonly property int endRoom: chevron + Tokens.spacing.xs
 
     function indexOfKey(key) {
         for (var i = 0; i < model.length; i++)
@@ -94,46 +121,34 @@ Item {
                                         ? entry.accent : "transparent"
         readonly property bool tinted: accent.a > 0
 
-        height: strip.height
+        height: strip.chipHeight
+        anchors.verticalCenter: parent ? parent.verticalCenter : undefined
         hoverEnabled: true
 
         Accessible.role: Accessible.Button
         Accessible.name: text
+        Accessible.checked: current
 
         background: Rectangle {
-            radius: Tokens.radius.pill
+            radius: Tokens.radius.md
 
-            color: {
-                if (chip.tinted) {
-                    /* The category's own colour, at a strength that tells the
-                       three states apart without ever competing with the label
-                       on top of it. */
-                    return Qt.tint(Fluent.cardBackground,
-                                   Qt.rgba(chip.accent.r, chip.accent.g, chip.accent.b,
-                                           chip.current ? 0.26
-                                                        : chip.hovered ? 0.14 : 0.07))
-                }
-                return chip.current ? Tokens.brandTint
-                     : chip.hovered ? Fluent.subtleSecondary
-                                    : Fluent.cardBackground
-            }
+            /* Selected is the brand tint with a brand border — a fill, a
+               boundary and weight, so the active category is unmistakable
+               without colour alone. Hover is the ordinary subtle fill. */
+            color: chip.current ? Tokens.brandTint
+                 : chip.hovered ? Fluent.subtleSecondary
+                                : "transparent"
             Behavior on color { ColorAnimation { duration: Fluent.anim.appearance } }
 
-            border.width: 1
-            border.color: chip.current
-                ? (chip.tinted ? Qt.rgba(chip.accent.r, chip.accent.g,
-                                         chip.accent.b, 0.85)
-                               : Tokens.brand)
-                : (chip.tinted ? Qt.rgba(chip.accent.r, chip.accent.g,
-                                         chip.accent.b, 0.40)
-                               : Fluent.dividerBorder)
+            border.width: chip.current ? 1 : 0
+            border.color: Tokens.brand
 
             Rectangle {
                 anchors.fill: parent
                 radius: parent.radius
                 color: "transparent"
                 border.width: 2
-                border.color: Fluent.accent
+                border.color: Tokens.brand
                 visible: chip.visualFocus
             }
         }
@@ -152,12 +167,22 @@ Item {
                     visible: chip.entry.glyph !== undefined && chip.entry.glyph !== ""
                     icon: chip.entry.glyph !== undefined ? chip.entry.glyph : ""
                     size: Tokens.icon.sm
-                    /* The one place the category's colour becomes ink, and only
-                       because a glyph is a shape rather than text: a hue that
-                       would be unreadable as 15px type is still recognisable as
-                       a star. Neutral when the entry carries no colour. */
-                    color: chip.tinted ? chip.accent
-                         : chip.current ? Tokens.brand : Fluent.textSecondary
+                    color: chip.current ? Tokens.brand : Fluent.textSecondary
+                }
+
+                /* The category's colour as a small dot — the merchant's key,
+                    at a key's size, instead of the wash it used to be. Only
+                    when the glyph slot is not already carrying an icon (the
+                    Favourites star). */
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: chip.tinted
+                           && !(chip.entry.glyph !== undefined
+                                && chip.entry.glyph !== "")
+                    width: 8
+                    height: 8
+                    radius: 4
+                    color: chip.accent
                 }
 
                 Text {
@@ -182,20 +207,26 @@ Item {
     // =====================================================================
     // LAYOUT
     // =====================================================================
-    /* Anchors rather than a RowLayout: the chevrons overlay the ends of the strip
-       instead of taking width from it, so the chips do not shift sideways the
-       moment one more category arrives and makes the strip scrollable. */
+    /* The chips, with a spacer at each end when the row scrolls — see the
+       header. Anchors rather than a RowLayout: the chevrons overlay the ends
+       of the bar instead of taking width from it, so the chips do not shift
+       sideways the moment one more category arrives. */
     ListView {
         id: view
         anchors.fill: parent
+        anchors.leftMargin: Tokens.spacing.xs
+        anchors.rightMargin: Tokens.spacing.xs
         orientation: ListView.Horizontal
-        spacing: Tokens.spacing.sm
+        spacing: Tokens.spacing.xs
         clip: true
-        /* No flick-past-the-end: a chip strip that bounces reads as a bug rather
-           than as a gesture. */
+        /* No flick-past-the-end: a chip strip that bounces reads as a bug
+           rather than as a gesture. */
         boundsBehavior: Flickable.StopAtBounds
 
         model: strip.model
+
+        header: Item { width: strip.endRoom; height: 1 }
+        footer: Item { width: strip.endRoom; height: 1 }
 
         delegate: Chip {
             required property var modelData
@@ -227,30 +258,53 @@ Item {
         scroll.start()
     }
 
-    /* Both chevrons are anchored, so they swap sides in Arabic; each still moves
-       the strip the way its arrow points, because contentX runs with the
-       ListView's own direction. */
-    IconButton {
-        anchors.left: parent.left
-        anchors.verticalCenter: parent.verticalCenter
-        implicitWidth: strip.chevron
-        implicitHeight: strip.chevron
-        visible: strip.scrollable && !view.atXBeginning
-        glyph: "ic_fluent_chevron_left_20_regular"
-        glyphSize: Tokens.icon.sm
-        tooltip: Strings.t("action.scroll_back", "Back")
-        onClicked: strip.scrollBy(-view.width * 0.8)
+    /* Both chevrons sit on a white backing rounded to the bar's own corner,
+       so a chip passing beneath the arrow reads as passing under a button
+       rather than colliding with a glyph; they swap sides in Arabic, and each
+       still moves the strip the way its arrow points, because contentX runs
+       with the ListView's own direction. */
+    component Chevron: Rectangle {
+        id: plate
+
+        property string glyph: ""
+        property string tip: ""
+        property bool showing: false
+        property int delta: 0
+
+        width: strip.chevron
+        height: strip.chevron
+        radius: Tokens.radius.sm
+        color: Tokens.workspace.surface
+        visible: showing
+
+        IconButton {
+            anchors.centerIn: parent
+            implicitWidth: strip.chevron
+            implicitHeight: strip.chevron
+            glyph: plate.glyph
+            glyphSize: Tokens.icon.sm
+            tooltip: plate.tip
+            onClicked: strip.scrollBy(plate.delta)
+        }
     }
 
-    IconButton {
-        anchors.right: parent.right
+    Chevron {
+        anchors.left: parent.left
+        anchors.leftMargin: 2
         anchors.verticalCenter: parent.verticalCenter
-        implicitWidth: strip.chevron
-        implicitHeight: strip.chevron
-        visible: strip.scrollable && !view.atXEnd
+        showing: strip.scrollable && !view.atXBeginning
+        glyph: "ic_fluent_chevron_left_20_regular"
+        tip: Strings.t("action.scroll_back", "Back")
+        delta: -view.width * 0.8
+    }
+
+    Chevron {
+        anchors.right: parent.right
+        anchors.rightMargin: 2
+        anchors.verticalCenter: parent.verticalCenter
+        showing: strip.scrollable && !view.atXEnd
         glyph: "ic_fluent_chevron_right_20_regular"
-        glyphSize: Tokens.icon.sm
-        tooltip: Strings.t("action.scroll_forward", "Forward")
-        onClicked: strip.scrollBy(view.width * 0.8)
+        tip: Strings.t("action.scroll_forward", "Forward")
+        delta: view.width * 0.8
     }
 }

@@ -52,7 +52,8 @@ from PySide6.QtCore import (
 )
 
 from .. import diagnostics
-from . import fmt, interop, legacy
+from . import fmt, images, interop, legacy
+from .till import CATALOGUE_MAX
 
 
 class Catalogue(QObject):
@@ -307,10 +308,11 @@ class Catalogue(QObject):
             return []
         try:
             rows = database.fetch_catalog_cards(int(category_id) or None)
+            figures = self._figures(database)
         except Exception as exc:  # noqa: BLE001
             self.rejected.emit(str(exc))
             return []
-        return [self._card(row) for row in rows]
+        return [self._card(row, figures.get(int(row["id"]))) for row in rows]
 
     @Slot(int, "QVariant")
     def reorderProducts(self, category_id: int, ids: object) -> None:
@@ -333,42 +335,75 @@ class Catalogue(QObject):
             return []
         try:
             rows = database.fetch_catalog_cards(favorite_only=True)
+            figures = self._figures(database)
         except Exception as exc:  # noqa: BLE001
             self.rejected.emit(str(exc))
             return []
-        return [self._card(row) for row in rows]
+        return [self._card(row, figures.get(int(row["id"]))) for row in rows]
 
     @staticmethod
-    def _card(row: dict) -> dict:
-        """One tile for the arrange screen.
+    def _figures(database) -> dict:
+        """Every product's card figures, by id, in one read.
 
-        WHY THERE IS NO PRICE ON IT
-
-        There used to be, and it was always "0.00". These two slots read
-        `fetch_products_in_category`, whose SELECT is `id, name, position,
-        show_on_pos` — so `sale_price`, `stock` and `is_favorite` were all absent,
-        `fmt_money(None)` rendered "0.00", `fmt_qty(None)` rendered "0", and
-        `bool(None)` left every star hollow on every category tab. The Favourites
-        tab looked right only because `fetch_favorites` goes through a different row
-        builder that happens to carry those columns. That is most of "it works on
-        some tiles and not others".
-
-        `fetch_catalog_cards` is the function pos wrote for exactly this screen —
-        its docstring says "product cards for the arrange / favorites managers" —
-        and it returns the favourite flag and the visibility flag but no price. Which
-        is the right trade: a price is not a lever on a screen about order, and a
-        wrong price is worse than none. Both tabs now read the same function, so
-        they cannot disagree again.
-
-        `hidden` is passed through because `fetch_catalog_cards` includes products
-        with `show_on_pos = 0` while the till's own query excludes them. Without the
-        flag, arranging one of those is a swap that visibly does nothing.
+        `fetch_catalog_cards` — the arrange screen's own query — carries the
+        order, the star and the eye, and nothing about money or the shelf: it
+        was written for a screen about ORDER, and once shipped tiles with a
+        "0.00" on every one of them because of it. But the card this dialog
+        draws is the till's card, and the till's card has a price, a shelf and
+        a photo. Those come from the one query that holds them all —
+        `fetch_products`, the same read the till's own wall is built from — and
+        are joined by id here: one indexed read per reload, not one per tile.
         """
+        out = {}
+        listing = database.fetch_products("", 1, CATALOGUE_MAX, None)
+        for row in listing.get("rows") or []:
+            out[int(row["id"])] = row
+        return out
+
+    @staticmethod
+    def _card(row: dict, figure: dict | None) -> dict:
+        """One tile for the arrange screen — the till's tile row, not a summary.
+
+        WHY IT CARRIES PRICE, STOCK AND PHOTO NOW
+
+        It deliberately did not, and the reason was sound at the time: the two
+        slots read `fetch_products_in_category`, whose SELECT is `id, name,
+        position, show_on_pos` — no `sale_price`, no `stock`, no
+        `is_favorite` — so `fmt_money(None)` rendered "0.00" on every tile and
+        every star came out hollow. The fix then was to drop the price; the
+        fix now is to bring the real figures over from `_figures`, because
+        this screen exists to show the arrangement AS THE CASHIER WILL MEET
+        IT, and a card the till draws with a price, a shelf and a photo is not
+        the card the operator is looking at here when those are missing.
+
+        `hidden` is passed through because `fetch_catalog_cards` includes
+        products with `show_on_pos = 0` while the till's own query excludes
+        them. Without the flag, arranging one of those is a swap that visibly
+        does nothing.
+
+        `color` is the category's, as on the till — the accent stripe beside
+        the name is how a category reads from across the counter.
+        """
+        figure = figure or {}
+        tracked = bool(row.get("track_stock", True))
+        stock = float(figure.get("stock") or 0.0)
+        threshold = float(figure.get("low_stock_threshold") or 0.0)
         return {
             "id": row["id"],
             "name": row["name"],
             "favorite": bool(row.get("is_favorite")),
             "hidden": not bool(row.get("show_on_pos", True)),
+            # -- the till card's own figures (see `_figures`) ---------------
+            "price_text": fmt.money(figure.get("sale_price")),
+            # A product with no shelf reads as plentiful, exactly as the
+            # till's own `_tile` argues: 0 on a card means "sold out", which
+            # is the opposite of the truth for a service or a weighed item.
+            "stock": stock if tracked else 1.0,
+            "stock_text": fmt.qty(stock) if tracked else "\u221e",
+            "low_stock": tracked and 0.0 < stock <= threshold,
+            "barcode": figure.get("barcode") or "",
+            "color": row.get("color") or "",
+            "image": images.url_for(figure.get("image_path") or ""),
         }
 
     @Slot(int, bool)

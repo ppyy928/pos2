@@ -8,18 +8,23 @@ import Mizan
  * Arrange — the till's own tiles, dragged into the order the shop wants them.
  *
  *   [★ Favourites] [▌Drinks] [▌Bakery] …
- *   ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐
- *   │▌Coca   │ │▌Fanta  │ │▌Water  │ │ Pain   │   drag one onto another
- *   │ 120,00 │ │ 120,00 │ │  60,00 │ │  35,00 │   and they swap places
- *   └────────┘ └────────┘ └────────┘ └────────┘
+ *   ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+ *   │▌Coca-Cola ★ │ │▌Fanta      ★ │ │▌Water          │  drag one onto another
+ *   │ 120,00 St 24 │ │ 120,00 St 12 │ │  60,00  St 8  │  and they swap places
+ *   └──────────────┘ └──────────────┘ └──────────────┘
+ *     ①              ②              ③                ← position pill
  *
  * WHY TILES AND NOT A LIST
  *
  * This screen exists so a cashier's hand can go to the same place every time, and
  * the only honest way to arrange something for the eye is to show it as the eye
  * will meet it. A numbered list with up/down buttons describes the order; a grid of
- * the actual tiles *is* the order — same component, same size, same colours as the
- * till, so what is arranged here is what appears there.
+ * the actual tiles *is* the order — the till's own card, at the till's own count
+ * per row, with the till's own photo-or-not, so what is arranged here is what
+ * appears there. Two things make that literal rather than aspirational:
+ * `TileMetrics` (the wall's count and card shape, published by PosPage and read
+ * here — see `liveColumns`) and `PosTile` itself, fed the price, the shelf and
+ * the photo instead of a name and an empty price line.
  *
  * HOW REORDERING WORKS — TWO WAYS, ONE RULE
  *
@@ -94,27 +99,54 @@ AppDialog {
     readonly property var ctrl: (typeof app !== "undefined" && app) ? app.catalogue : null
 
     /*
-     * AS WIDE AS FOUR TILES, AND NOT A PIXEL WIDER.
+     * AS WIDE AS THE TILL'S OWN ROW, AND NOT A PIXEL WIDER.
      *
-     * This was 1420, and the tiles inside it were islands: four columns is a
-     * deliberate cap (see `columns` below), a tile is capped at `tileMax`, and
-     * 1420px divided four ways gives each cell 330px to hold a 192px card — so
-     * every gap between two cards came out at 138px while the gap between two rows
-     * stayed at 12. A wall of the shop's products with more air than product in it,
-     * which is the opposite of what the operator is here to read.
+     * This was 1420, and the tiles inside it were islands: the count is capped
+     * (see `columns` below), a tile is capped at `tileMax`, and 1420px divided
+     * four ways gives each cell 330px to hold a 192px card — so every gap
+     * between two cards came out at 138px while the gap between two rows
+     * stayed at 12. A wall of the shop's products with more air than product in
+     * it, which is the opposite of what the operator is here to read.
      *
-     * The room was the fault, not the gaps: the surplus had nowhere to go but into
-     * the cells. So the dialog now asks for exactly the width its own wall needs —
-     * four cells of a tile plus one gap, the grid's inset, and the dialog's
-     * padding — and the leftover 138px per gap is simply not requested. Written as
-     * the arithmetic rather than as the number it comes to, because every term in it
-     * is a token that something else also reads.
+     * The room was the fault, not the gaps: the surplus had nowhere to go but
+     * into the cells. So the width is written as the arithmetic for the row the
+     * TILL is wearing — TileMetrics.columns cells of a capped tile plus one gap
+     * each, plus the grid's inset and the dialog's padding — and the leftover
+     * is simply not requested. Written as the arithmetic rather than as the
+     * number it comes to, because every term in it is a token that something
+     * else also reads; `tileCap` is the till's own ceiling for the card shape
+     * it is currently wearing.
      */
-    preferredWidth: Tokens.size.tileColumns
-                    * (Tokens.size.tileMax + Tokens.spacing.sm)
+    preferredWidth: liveColumns * (tileCap + Tokens.spacing.sm)
                     + 2 * Tokens.spacing.sm
                     + leftPadding + rightPadding
     preferredHeight: 900
+
+    /*
+     * THE TILL'S OWN ANSWER, READ — NOT RE-DERIVED.
+     *
+     * The count in a row, and whether the cards wear the photo band, are
+     * decided by the till's wall: PosPage's grid publishes both through
+     * TileMetrics, which explains why it is a relay and not a second
+     * calculation. This screen exists to show the arrangement AS THE CASHIER
+     * WILL MEET IT, so it must not compute its own answer from its own width —
+     * a 1020px dialog over a 1920px window would say four while the till says
+     * three, and an arrangement shown four to a row is not the arrangement
+     * being arranged.
+     *
+     * `live` guards the read: a dialog opened with no till on screen falls back
+     * to the token rather than to a figure produced by somebody else's window.
+     */
+    readonly property bool liveMetrics: TileMetrics.live
+    readonly property int liveColumns:
+        TileMetrics.live && TileMetrics.columns > 0 ? TileMetrics.columns
+                                                    : Tokens.size.tileColumns
+    readonly property bool liveMedia: TileMetrics.live && TileMetrics.mediaWall
+
+    /* The ceiling for the card shape in force — the till's own two ceilings,
+       picked exactly as the till picks them. */
+    readonly property int tileCap: liveMedia ? Tokens.size.tileMediaMax
+                                             : Tokens.size.tileMax
 
     title: Strings.t("products.arrange.action", "Arrange tiles")
 
@@ -411,7 +443,11 @@ AppDialog {
         if (grid.cellWidth <= 0 || grid.cellHeight <= 0)
             return -1
 
-        var cols = Math.max(1, Math.floor(grid.width / grid.cellWidth))
+        /* The grid's own column count, not a re-derivation of it: the cells
+           are laid out by `columns`, and floor(width / cellWidth) can
+           disagree with it by one when the division truncates — which aims
+           the drop one column away from the finger. */
+        var cols = grid.columns
         var col = Math.floor(p.x / grid.cellWidth)
         if (col < 0 || col >= cols)
             return -1
@@ -613,19 +649,19 @@ AppDialog {
                 model: dialog.rows
 
                 readonly property int gap: Tokens.spacing.sm
-                /* The same count as the till's own wall, and the same cap on a tile's
-                   width: this screen exists to show the arrangement as the cashier
-                   will meet it, so a row here has to hold what a row there holds.
-                   It was pinned to 3 and then briefly flowed — which put seven across
-                   this dialog against the till's four, and an arrangement shown seven
-                   to a row is not the arrangement being arranged. */
-                readonly property int columns:
-                    Math.max(1, Math.min(Tokens.size.tileColumns,
-                                         Math.floor((width + gap)
-                                                    / (Tokens.size.tileMin + gap))))
+                /* THE TILL'S COUNT, VERBATIM — see `liveColumns` above. This
+                   used to be its own arithmetic over the dialog's own width,
+                   which is how it came to show four across a three-across
+                   till. A row here holds exactly what a row there holds. */
+                readonly property int columns: Math.max(1, dialog.liveColumns)
 
                 cellWidth: Math.max(1, Math.floor(width / columns))
-                cellHeight: Tokens.size.tile + gap
+                /* The card's height follows the card SHAPE the till is
+                   wearing: the photo card is as tall as its own words (the
+                   token the till's cells are sized from), the text card is the
+                   compact tile. */
+                cellHeight: (dialog.liveMedia ? Tokens.size.tileMediaHeight
+                                              : Tokens.size.tile) + gap
 
                 /* Every delegate alive while a drag is live. The default 320px
                    buffer destroys a cell once auto-scroll has carried the viewport
@@ -713,13 +749,11 @@ AppDialog {
 
                     Item {
                         id: floater
-                        /* Capped and centred in the cell, like the till's tiles. The
-                           cap does nothing at this dialog's own width — see
-                           `preferredWidth`, which is chosen so a cell is a tile plus
-                           one gap — and holds the cards at the till's size on a
-                           window too narrow to grant the request. */
-                        width: Math.min(grid.cellWidth - grid.gap,
-                                        Tokens.size.tileMax)
+                        /* Capped and centred in the cell, like the till's tiles.
+                           The cap is the one for the card shape in force — the
+                           till's own ceiling — so a wide cell here leaves the
+                           same gutter a wide cell there does. */
+                        width: Math.min(grid.cellWidth - grid.gap, dialog.tileCap)
                         height: grid.cellHeight - grid.gap
                         x: Math.round((grid.cellWidth - width) / 2)
                         y: Math.round(grid.gap / 2)
@@ -731,15 +765,34 @@ AppDialog {
                             NumberAnimation { duration: Fluent.anim.appearance }
                         }
 
+                        /* THE TILL'S OWN CARD, wearing the till's own facts.
+                           Same component, same fields, same styling as the
+                           wall: the name, the price, the shelf and — when the
+                           shop's image setting has them on — the photo, with
+                           the category's colour on the accent stripe. The
+                           screen's own affordances (the star, the eye, the
+                           drag) are layered over this, not cut into it: a
+                           card that showed less than the till's would make
+                           the arrangement a picture of something the cashier
+                           never sees. */
                         PosTile {
                             anchors.fill: parent
                             name: cell.modelData.name
-                            /* No price here — see Catalogue._card. This screen is
-                               about order, and the figure it used to show was
-                               always 0.00. */
-                            priceText: ""
-                            stock: 1            // arranging is not selling
-                            accent: "transparent"
+                            priceText: cell.modelData.price_text !== undefined
+                                       ? cell.modelData.price_text : ""
+                            barcode: cell.modelData.barcode !== undefined
+                                     ? cell.modelData.barcode : ""
+                            stock: cell.modelData.stock !== undefined
+                                   ? cell.modelData.stock : 1
+                            stockText: cell.modelData.stock_text !== undefined
+                                       ? cell.modelData.stock_text : ""
+                            lowStock: cell.modelData.low_stock === true
+                            accent: cell.modelData.color !== undefined
+                                    && cell.modelData.color !== ""
+                                    ? cell.modelData.color : "transparent"
+                            showImage: dialog.liveMedia
+                            imageSource: cell.modelData.image !== undefined
+                                         ? cell.modelData.image : ""
                             /* Keep the top trailing corner clear: the star below is
                                drawn over this tile, and these tiles are now as narrow
                                as the till's. */
@@ -811,6 +864,26 @@ AppDialog {
 
                         DragHandler {
                             id: handler
+
+                            /*
+                             * NO TARGET — this handler tracks, it does not drag.
+                             *
+                             * The handler's default target is its parent item,
+                             * and an active DragHandler writes that target's x
+                             * and y itself, every frame, from its own
+                             * translation — while followDrag() below writes the
+                             * same x and y from the pointer. Two writers on one
+                             * position is the shake: the card snaps between two
+                             * answers sixty times a second. Worse, the
+                             * automatic drag tracks its grab in the CELL's
+                             * frame, so the moment auto-scroll carries the cell
+                             * out from under the finger, the handler's own
+                             * write throws the card a viewport away — outside
+                             * the clip, gone. `target: null` leaves the handler
+                             * a pointer tracker and followDrag() the one
+                             * writer.
+                             */
+                            target: null
 
                             /*
                              * The whole grab, and nothing but the grab.

@@ -11,7 +11,7 @@ import Mizan
  *   │ Atlas Beans   288582…  [+] │ │   DZ-Retail Store     │
  *   │ Atlas Rice    288582…  [+] │ │   Atlas Beans         │
  *   │ Atlas Salt    (no code) [+] │ │   671.91 DA           │
- *   │ …                           │ │   ▍▍▎▍▎▍▍▎ 2885822…   │
+ *   │ 1–100 of 400  ‹ ‹1/4› ›     │ │   ▍▍▎▍▎▍▍▎ 2885822…   │
  *   └─────────────────────────────┘ ├───────────────────────┤
  *                                   │ SHEET — 5      [🧹]   │
  *                                   │ Atlas Beans   [-]4[+] │
@@ -104,6 +104,26 @@ AppDialog {
        code to print. Loaded once per search rather than per keystroke. */
     property var candidates: []
 
+    /* The catalogue's own pages, in the pages' own pager: the query is capped
+       at 400 rows and filtering it in QML is a pass over an array, so the
+       pager is presentation rather than transport — the same "one page of the
+       answer at a time" every list screen shows. Narrowing the search or the
+       category puts the pager back on page one, because the row the operator
+       is looking for is not on the page they were reading. */
+    property int currentPage: 1
+    property int pageSize: 100
+
+    readonly property int maxPage: Math.max(1, Math.ceil(
+        candidates.length / Math.max(1, pageSize)))
+    readonly property int pageStart: (currentPage - 1) * Math.max(1, pageSize)
+    readonly property var pageRows: candidates.slice(
+        pageStart, pageStart + Math.max(1, pageSize))
+
+    onCandidatesChanged: {
+        if (currentPage > maxPage)
+            currentPage = maxPage
+    }
+
     /* [{ id, name, barcode, price, price_text, copies }] — the sheet. */
     property var queue: []
 
@@ -148,6 +168,7 @@ AppDialog {
 
     function reload() {
         candidates = ctrl ? ctrl.labelCandidates(search, categoryId) : []
+        currentPage = 1
     }
 
     // -- the queue ---------------------------------------------------------
@@ -671,21 +692,44 @@ AppDialog {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     columns: dialog.candidateColumns
-                    model: dialog.candidates
+                    /* The page on screen, not the whole answer: the pager
+                       below owns which page that is. */
+                    model: dialog.pageRows
                     emptyIcon: "ic_fluent_barcode_scanner_20_regular"
                     emptyText: Strings.t("state.no_results.title", "No matches")
 
                     /* The + on the row. Double-click and Enter still work —
-                       rowActivated is the keyboard's way in. */
+                       rowActivated is the keyboard's way in. Row indices are
+                       the PAGE's, which is the list the table is showing. */
                     onActionTriggered: (row, action) => {
                         if (action !== "add")
                             return
-                        if (row >= 0 && row < dialog.candidates.length)
-                            dialog.enqueue(dialog.candidates[row])
+                        if (row >= 0 && row < dialog.pageRows.length)
+                            dialog.enqueue(dialog.pageRows[row])
                     }
                     onRowActivated: (row) => {
-                        if (row >= 0 && row < dialog.candidates.length)
-                            dialog.enqueue(dialog.candidates[row])
+                        if (row >= 0 && row < dialog.pageRows.length)
+                            dialog.enqueue(dialog.pageRows[row])
+                    }
+                }
+
+                /* The pages' own pager, so "1–100 of 400" and "100 / page"
+                   mean here exactly what they mean on Products. Hidden when
+                   there is nothing to page — the table's empty state above
+                   already says so. */
+                PaginationBar {
+                    Layout.fillWidth: true
+                    visible: dialog.candidates.length > 0
+                    page: dialog.currentPage
+                    total: dialog.candidates.length
+                    pageSize: dialog.pageSize
+
+                    onPageRequested: (requested) => {
+                        dialog.currentPage = requested
+                    }
+                    onPageSizeRequested: (requested) => {
+                        dialog.pageSize = requested
+                        dialog.currentPage = 1
                     }
                 }
             }
@@ -860,7 +904,7 @@ AppDialog {
 
                             readonly property bool shown: dialog.shownId === line.modelData.id
 
-                            width: sheet.width - Tokens.spacing.sm
+                            width: sheet.width
                             height: Tokens.size.control + Tokens.spacing.sm
                             radius: Tokens.radius.sm
                             color: line.shown ? Tokens.brandTint
@@ -877,7 +921,12 @@ AppDialog {
                             RowLayout {
                                 anchors.fill: parent
                                 anchors.leftMargin: Tokens.spacing.sm
+                                /* The scrollbar's seat: the trailing count
+                                   stays a full seat clear of the edge the
+                                   12px bar widens over. Mirrors in Arabic,
+                                   as anchors do. */
                                 anchors.rightMargin: Tokens.spacing.xs
+                                                      + Tokens.size.scrollSeat
                                 spacing: Tokens.spacing.xs
 
                                 ColumnLayout {

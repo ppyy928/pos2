@@ -381,8 +381,9 @@ class Stock(QObject):
                 "stock": float(row.get("stock") or 0.0),
                 "stock_text": f"{fmt.qty(row.get('stock'))} {unit}".strip(),
                 "price_text": fmt.money(row.get("sale_price")),
-                # Both marked in the picker's status column: a hidden product is
-                # still sellable and still deliverable, so it is listed and said.
+                # A hidden product is still sellable and still deliverable, so
+                # it is listed; `track_stock` is what the till's picker reads
+                # to report an empty shelf at the moment of the pick.
                 "hidden": not bool(row.get("show_on_pos", True)),
                 # False for a service or anything weighed at the counter: no
                 # shelf, so never "out of stock".

@@ -149,6 +149,57 @@ FluentWindowBase {
                 color: Fluent.textPrimary
             }
 
+            /*
+             * THE PAGE'S OWN ACTIONS, IN THE WINDOW'S OWN BAR.
+             *
+             * The till lends five shortcuts here — new customer, new product,
+             * arrange, refresh, labels — which used to be a second full-width
+             * row of chrome under this one. The title bar already exists on
+             * every screen at the same height, and the space between the app's
+             * name and the window controls was dead drag area; the actions
+             * move into it and the extra row goes.
+             *
+             * `host.page` is whatever the StackView is showing, so this row
+             * follows navigation with no wiring: a page that declares
+             * `titleActions` gets buttons, a page that does not gets none. The
+             * click goes back to the PAGE (titleAction(id)) because the page
+             * owns what the action means — the shell only knows where to put
+             * it. The Item after this row is the drag area; a plain Item
+             * accepts no mouse events, so empty space still moves the window,
+             * exactly as the theme toggle's neighbours always have.
+             */
+            RowLayout {
+                id: titleActions
+                Layout.alignment: Qt.AlignVCenter
+                spacing: Tokens.spacing.sm
+                visible: host.page !== null
+                         && host.page.titleActions !== undefined
+                         && host.page.titleActions.length > 0
+
+                Repeater {
+                    model: titleActions.visible ? host.page.titleActions : []
+
+                    delegate: TitleAction {
+                        required property var modelData
+
+                        visible: modelData.visible === undefined
+                                 || modelData.visible === true
+                        enabled: modelData.enabled === undefined
+                                 || modelData.enabled === true
+                        glyph: modelData.glyph !== undefined
+                               ? modelData.glyph : ""
+                        label: modelData.label !== undefined
+                               ? modelData.label : ""
+                        shortcut: modelData.shortcut !== undefined
+                                  ? modelData.shortcut : ""
+                        onClicked: {
+                            if (host.page && typeof host.page.titleAction === "function")
+                                host.page.titleAction(modelData.id)
+                        }
+                    }
+                }
+            }
+
             // Drag zone.
             Item { Layout.fillWidth: true }
 
@@ -160,8 +211,9 @@ FluentWindowBase {
 
                 QC.ToolTip.visible: hovered
                 QC.ToolTip.delay: 400
-                QC.ToolTip.text: Fluent.isDark ? qsTr("Light theme")
-                                               : qsTr("Dark theme")
+                QC.ToolTip.text: Fluent.isDark
+                                  ? Strings.t("shell.theme.light", "Light theme")
+                                  : Strings.t("shell.theme.dark", "Dark theme")
             }
         }
     }
@@ -255,12 +307,10 @@ FluentWindowBase {
                 window.currentUser = user
             }
 
-            function onCloseRequested() {
-                // The last line of a normal run, and the one that tells a crash
-                // apart from a shutdown when the log ends without it.
-                Diag.action("shell", "quit requested from the login screen")
-                Qt.quit()
-            }
+            /* No closeRequested handler: the login page no longer offers an
+               internal close, because the standard window controls are always
+               present above it. Qt.quit from a form field competes with them,
+               and Escape must dismiss a field, not end the process. */
         }
 
         /* Nothing is scannable before somebody signs in, and the login form's two
@@ -362,7 +412,9 @@ FluentWindowBase {
         z: 20
 
         onUnavailable: (key) => shellToasts.show(
-            qsTr("That screen is not part of this build yet."), Severity.info)
+            Strings.t("workflow.not_ready",
+                      "That screen is not part of this build yet."),
+            Severity.info)
         /* A file that exists and will not load is a defect, and it says which. */
         onFailed: (key, message) => shellToasts.show(key + ": " + message,
                                                      Severity.error)

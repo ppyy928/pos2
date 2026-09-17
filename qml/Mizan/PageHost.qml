@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls as QC
 import QtQuick.Layouts
 import FluentControls
+import Mizan
 
 /*
  * Hosts the module pages.
@@ -23,6 +24,13 @@ Item {
     property string currentKey: ""
     readonly property int depth: stack.depth
     readonly property bool busy: _pending > 0
+
+    /* The page on screen — what the StackView is showing. The shell's title bar
+       reads its optional `titleActions` and calls its `titleAction(id)`, so a
+       page can lend the window's own chrome the actions that belong to it
+       without reaching into the shell. A page that declares neither simply
+       contributes no buttons; nothing here requires them. */
+    readonly property var page: stack.currentItem
 
     signal pageLoaded(string key)
     signal pageFailed(string key, string message)
@@ -203,7 +211,7 @@ Item {
 
                 Text {
                     Layout.alignment: Qt.AlignHCenter
-                    text: destination.title
+                    text: Strings.t(destination.titleKey, destination.title)
                     font.family: Tokens.font.family
                     font.pixelSize: Tokens.font.title
                     font.weight: Font.DemiBold
@@ -214,7 +222,8 @@ Item {
                     Layout.fillWidth: true
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
-                    text: qsTr("This screen has not been rebuilt yet.")
+                    text: Strings.t("pagehost.unbuilt",
+                                    "This screen has not been rebuilt yet.")
                     font.family: Tokens.font.family
                     font.pixelSize: Tokens.font.body
                     color: Fluent.textSecondary
@@ -247,7 +256,9 @@ Item {
 
                 Text {
                     Layout.alignment: Qt.AlignHCenter
-                    text: qsTr("%1 failed to load").arg(destination.title)
+                    text: Strings.tf("pagehost.failed",
+                                     "{title} failed to load",
+                                     { title: destination.title })
                     font.family: Tokens.font.family
                     font.pixelSize: Tokens.font.subtitle
                     font.weight: Font.DemiBold
