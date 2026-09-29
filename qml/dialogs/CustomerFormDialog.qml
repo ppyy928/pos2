@@ -165,24 +165,6 @@ AppDialog {
             row = ctrl.customer(customerId) || ({})
     }
 
-    /* Which of the three counters this customer buys over — read off the record,
-       for the chip beside the name. Changing it is the editor's business. */
-    readonly property string levelKey: row.price_level !== undefined && row.price_level
-                                       ? row.price_level : "retail"
-
-    readonly property var levels: [
-        { key: "retail", label: Strings.t("price.retail", "Retail") },
-        { key: "half", label: Strings.t("price.half", "Half-wholesale") },
-        { key: "wholesale", label: Strings.t("price.wholesale", "Wholesale") }
-    ]
-
-    function levelIndex(key) {
-        for (var i = 0; i < levels.length; i++)
-            if (levels[i].key === key)
-                return i
-        return 0
-    }
-
     function openPayment() {
         /* A new payment, never a leftover correction: the button and the pen
            are two different questions, and the panel has to know which one it
@@ -630,10 +612,12 @@ AppDialog {
                     /*
                      * The rest of the record on one line.
                      *
-                     * Wilaya, price level and credit ceiling — the three that change
-                     * what happens at the till, so they belong beside the name rather
-                     * than behind the edit button. The postal detail (address, email,
-                     * NIF, RC) is only ever read while writing an invoice, and lives
+                     * Wilaya and credit ceiling — the two that change what happens
+                     * at the till, so they belong beside the name rather than
+                     * behind the edit button. (A price level used to sit between
+                     * them; the shop sells at one band now and a customer carries
+                     * no level at all.) The postal detail (address, email, NIF,
+                     * RC) is only ever read while writing an invoice, and lives
                      * in the editor.
                      */
                     RowLayout {
@@ -646,24 +630,6 @@ AppDialog {
                             font.family: Tokens.font.family
                             font.pixelSize: Tokens.font.body
                             color: Fluent.textTertiary
-                        }
-
-                        Rectangle {
-                            visible: dialog.levelKey !== "retail"
-                            implicitWidth: levelChip.implicitWidth + Tokens.spacing.md
-                            implicitHeight: levelChip.implicitHeight + Tokens.spacing.xs
-                            radius: Tokens.radius.pill
-                            color: Tokens.infoTint
-
-                            Text {
-                                id: levelChip
-                                anchors.centerIn: parent
-                                text: dialog.levels[dialog.levelIndex(dialog.levelKey)].label
-                                font.family: Tokens.font.family
-                                font.pixelSize: Tokens.font.caption
-                                font.weight: Font.DemiBold
-                                color: Tokens.info
-                            }
                         }
 
                         Text {

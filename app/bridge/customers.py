@@ -218,8 +218,10 @@ class Customers(QObject):
 
         `extra` is optional so the quick-add path and every existing caller stay
         two arguments and a flag: a cashier holding up a queue types a name, and
-        the address, the price level and the credit ceiling are filled in later on
-        the record itself.
+        the address and the credit ceiling are filled in later on the record
+        itself. (`price_level` used to be named here too; the shop sells at one
+        band now and no form offers a level — `save_customer` still writes the
+        key if a caller ever sends one.)
         """
         clean = (name or "").strip()
         if not clean:

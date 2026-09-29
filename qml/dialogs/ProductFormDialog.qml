@@ -15,9 +15,10 @@ import Mizan
  *   │  │ photo  │  Barcode [ 5449000996 ] Category [ Drinks ▾ ] Unit ▾  │
  *   │  └────────┘                                                       │
  *   └───────────────────────────────────────────────────────────────────┘
- *   ┌─ 💰 PRICING ───────────────────── margin 135.15 (20.1%) ──────────┐
- *   │  Cost [ 536.76 ]  Retail [ 671.91 ]  VAT [ shop default ▾ ]       │
- *   │  ⌄ Wholesale prices                                               │
+ *   ┌─ 💰 PRICING ──────────────────────────────────────────────────────┐
+ *   │  Cost [ 536.76 ]                                                  │
+ *   │  Margin   20.1%  ·  135.15          ← live, red at or below cost   │
+ *   │  Retail [ 671.91 ]        VAT [ shop default ▾ ]                  │
  *   └───────────────────────────────────────────────────────────────────┘
  *   ┌─ 📊 STOCK ────────────────────────────────────────────────────────┐
  *   │  In stock  295  [ Adjust ]   Low-stock [ 5 ]                      │
@@ -211,16 +212,20 @@ AppDialog {
     property var packs: []
 
     /*
-     * Whether the wholesale counters are on screen.
+     * The two wholesale counters, as the record carries them.
      *
-     * Four price boxes on one form is what this dialog was criticised for, and the
-     * criticism was right: a shop adding a tin of beans answers cost and price, and the
-     * other two are a decision it makes for a handful of products at most. So they are
-     * behind a disclosure that opens itself for a product that already uses them —
-     * which means the form is two prices for almost everything and four for the few
-     * that need four, instead of four for everything.
+     * The form no longer ASKS for them — one price is the answer for this shop, and
+     * two boxes nobody edits made the two that matter harder to find — but it still
+     * has to SEND them: `save_product` writes both columns on every save, so a form
+     * that sent nothing would zero whatever a product has stored the first time
+     * anyone opened and saved it. These hold the row's own figures, read in `fill()`
+     * and handed back untouched; a new product starts at zero, which is what "not
+     * set" already meant. The columns stay in the database, unchanged and unmigrated
+     * — the shop is retail-only, and the till now prices everything at the sale
+     * price (see Till's own note).
      */
-    property bool tiersOpen: false
+    property real priceHalf: 0
+    property real priceWholesale: 0
 
     /* The VAT rate this product is charged at: 0 is "the shop's default", anything else
        is a row on the taxes screen. Held here rather than read off the combo, because the
@@ -297,10 +302,10 @@ AppDialog {
         purchase.text = row.purchase_price !== undefined
                         ? String(row.purchase_price) : ""
         sale.text = row.sale_price !== undefined ? String(row.sale_price) : ""
-        /* Zero means "not set" for the two extra counters, and an empty box says that
-           better than a 0 the operator has to read as absent. */
-        half.text = row.price_half ? String(row.price_half) : ""
-        wholesale.text = row.price_wholesale ? String(row.price_wholesale) : ""
+        /* Carried, not asked: the record's own wholesale figures ride through the
+           form unchanged so saving cannot wipe them — see the properties' note. */
+        priceHalf = row.price_half ? Number(row.price_half) : 0
+        priceWholesale = row.price_wholesale ? Number(row.price_wholesale) : 0
         /* A rate is named, not typed: 0 means "the shop's default", which is what the
            first entry in the picker stands for. */
         taxId = row.tax_id ? row.tax_id : 0
@@ -310,9 +315,6 @@ AppDialog {
         /* A new product has a shelf until told otherwise — a shop is mostly shelves,
            so the exception is the thing that gets declared. */
         tracked.checked = creating ? true : row.track_stock !== false
-        /* Collapsed unless this product actually uses the other counters, so the form
-           opens at the length of the question it is usually asking. */
-        tiersOpen = (row.price_half > 0) || (row.price_wholesale > 0)
         onPos.checked = row.show_on_pos !== false
         favorite.checked = row.is_favorite === true
         category.currentIndex = indexOf(category.model, row.category_id)
@@ -347,17 +349,37 @@ AppDialog {
         return isNaN(value) ? 0 : value
     }
 
-    /* The one derived figure worth showing, and it lives in the pricing group's heading
-       rather than in a card or a stray line: it is a fact about that group and nothing
-       else, and a heading is where a group states its summary. */
+    /*
+     * THE MARGIN LINE — the one derived figure on this form.
+     *
+     * It sits between Cost and Retail price because that is the question it
+     * answers: "what does this pair leave me?". Both figures update as either box
+     * is typed in — a binding on the text, so there is no submit and no "recalc"
+     * step — and the amount is shown WITH the percentage, because "70" means
+     * nothing to an operator who thinks in percentages and "21.9%" means nothing
+     * to one reconciling a supplier's invoice.
+     *
+     * ≤ 0 is RED, the same crimson the purchases table paints a sale price that is
+     * at or below cost (DataTable's `thin` flag in PurchaseFormDialog). A product
+     * sold at a loss is the same fact on both screens and it should not have to be
+     * learned twice.
+     *
+     * The percentage is margin over the SALE price — the share of the ticket that
+     * is left — which is the number a shop compares against its rent and wages.
+     */
     readonly property real margin: number(sale.text) - number(purchase.text)
-    readonly property string marginText: {
-        if (number(sale.text) <= 0)
+    readonly property real marginPct: number(sale.text) > 0
+                                      ? margin / number(sale.text) * 100 : 0
+    readonly property bool marginKnown: purchase.text !== "" || sale.text !== ""
+    readonly property string marginLine: {
+        if (!marginKnown)
             return ""
-        var pct = margin / number(sale.text) * 100
-        return "\u200e" + (ctrl ? ctrl.moneyText(margin) : margin.toFixed(2))
-               + "  (" + pct.toFixed(1) + "%)"
+        return Strings.t("product.profit_unit", "Margin") + "   "
+               + "\u200e" + marginPct.toFixed(1) + "%   \u00b7   "
+               + "\u200e" + (ctrl ? ctrl.moneyText(margin) : margin.toFixed(2))
     }
+    readonly property color marginInk: margin <= 0 ? Tokens.danger
+                                                   : Fluent.textSecondary
 
     // -- packs -------------------------------------------------------------
     function addPack() {
@@ -456,8 +478,10 @@ AppDialog {
             unit_id: unit.model[unit.currentIndex].id,
             purchase_price: purchase.text,
             sale_price: sale.text,
-            price_half: half.text === "" ? 0 : number(half.text),
-            price_wholesale: wholesale.text === "" ? 0 : number(wholesale.text),
+            /* Carried through unchanged — see the properties' own note. The form
+               stopped asking for these; it must not stop KEEPING them. */
+            price_half: dialog.priceHalf,
+            price_wholesale: dialog.priceWholesale,
             /* 0 is not a rate, it is "the shop's default" — Python turns it into the
                NULL that `_product_rate` reads as "fall back". A named rate travels as
                its id, so moving that rate later moves this product with it. */
@@ -877,24 +901,17 @@ AppDialog {
                         glyph: "ic_fluent_tag_20_regular"
                         tone: "success"
 
-                        /* The margin, in the group's own heading. It is a fact about these
-                           four boxes and nothing else, and a heading is where a group states
-                           its summary — a stray line under the fields belonged to neither
-                           the group above it nor the one below. */
-                        actionItems: [
-                            Text {
-                                visible: dialog.marginText !== ""
-                                text: Strings.t("product.profit_unit", "Margin") + "  "
-                                      + dialog.marginText
-                                font.family: Tokens.font.family
-                                font.pixelSize: Tokens.font.caption
-                                font.weight: Font.DemiBold
-                                color: dialog.margin < 0 ? Tokens.danger : Tokens.success
-                            }
-                        ]
-
-                    /* Cost and retail together — the pair every product needs and the two
-                       the margin is between. */
+                    /*
+                     * COST, THE MARGIN, THEN RETAIL — the three facts read in the
+                     * order the decision is made.
+                     *
+                     * Cost and retail were side by side while the group also held
+                     * the two wholesale boxes; with those gone there is room for
+                     * the figure that stands between them to stand between them
+                     * literally, on its own line, updating as either box is
+                     * typed in. See `marginLine` for what it says and when it
+                     * turns red.
+                     */
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: Tokens.spacing.md
@@ -903,6 +920,22 @@ AppDialog {
                             label: Strings.t("product.purchase_price", "Cost")
                             Money { id: purchase }
                         }
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: dialog.marginKnown
+                        text: dialog.marginLine
+                        font.family: Tokens.font.family
+                        font.pixelSize: Tokens.font.caption
+                        font.weight: Font.DemiBold
+                        color: dialog.marginInk
+                        elide: Text.ElideRight
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Tokens.spacing.md
 
                         Field {
                             label: Strings.t("product.sale_price", "Retail price")
@@ -961,59 +994,16 @@ AppDialog {
 
 
                         /*
-                         * The wholesale counters, folded away.
+                         * The wholesale counters are gone from this form.
                          *
-                         * One price is the answer for almost every product, and four boxes
-                         * on the form made the two that matter harder to find. The link
-                         * below opens the other two, and `fill()` opens it by itself for a
-                         * product that already has them — so nobody who uses them has to
-                         * know the link exists.
+                         * They were folded behind a disclosure and still nobody
+                         * opened it: the shop prices in one band, and the two boxes
+                         * were two more ways for a product to be wrong. The columns
+                         * stay in the database and the values ride through a save
+                         * untouched (see `priceHalf`/`priceWholesale`), but nothing
+                         * here asks for them and nothing anywhere reads them — the
+                         * till charges every customer the sale price.
                          */
-                        RowLayout {
-                            Layout.fillWidth: true
-                            visible: !dialog.tiersOpen
-                            spacing: Tokens.spacing.sm
-
-                            GlyphButton {
-                                glyph: "ic_fluent_chevron_down_20_regular"
-                                text: Strings.t("product.more_prices",
-                                                "Wholesale prices")
-                                flat: true
-                                enabled: dialog.canManage
-                                onClicked: dialog.tiersOpen = true
-                            }
-
-                            Item { Layout.fillWidth: true }
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            visible: dialog.tiersOpen
-                            spacing: Tokens.spacing.md
-
-                            Field {
-                                label: Strings.t("product.price_half", "Half-wholesale price")
-                                Money {
-                                    id: half
-                                    placeholderText: Strings.t("price.unset", "same as retail")
-                                    font.pixelSize: Tokens.font.body
-                                }
-                            }
-
-                            Field {
-                                label: Strings.t("product.price_wholesale", "Wholesale price")
-                                Money {
-                                    id: wholesale
-                                    placeholderText: Strings.t("price.unset", "same as retail")
-                                    font.pixelSize: Tokens.font.body
-                                }
-                            }
-
-                            /* Half the row, deliberately: two optional prices beside two
-                               empty columns says "there is no third price" better than
-                               stretching them to fill the width would. */
-                            Item { Layout.fillWidth: true }
-                        }
                     }
 
                     // ---------------------------------------------------------

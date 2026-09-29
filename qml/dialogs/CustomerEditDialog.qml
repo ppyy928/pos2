@@ -61,24 +61,6 @@ AppDialog {
     /* The saved record, for a host that wants to react to its own save. */
     signal committed(var customer)
 
-    /* Which of the three counters this customer buys over. Held here rather than
-       read off the combo, because the combo is rebuilt when the language changes
-       and its index would not survive that. */
-    property string levelKey: "retail"
-
-    readonly property var levels: [
-        { key: "retail", label: Strings.t("price.retail", "Retail") },
-        { key: "half", label: Strings.t("price.half", "Half-wholesale") },
-        { key: "wholesale", label: Strings.t("price.wholesale", "Wholesale") }
-    ]
-
-    function levelIndex(key) {
-        for (var i = 0; i < levels.length; i++)
-            if (levels[i].key === key)
-                return i
-        return 0
-    }
-
     // =====================================================================
     // FILLING IT
     // =====================================================================
@@ -99,7 +81,6 @@ AppDialog {
         /* 0 is "no ceiling", and an empty box says that better than a 0 the
            operator has to know to read as unlimited. */
         limit.text = r.credit_limit ? String(r.credit_limit) : ""
-        levelKey = r.price_level ? r.price_level : "retail"
         error.text = ""
         open()
         name.forceActiveFocus()
@@ -136,7 +117,10 @@ AppDialog {
             email: email.text,
             tax_id: taxId.text,
             trade_id: tradeId.text,
-            price_level: dialog.levelKey,
+            /* `price_level` is deliberately absent: the form no longer offers one
+               and `save_customer` only writes a key it is handed, so whatever a
+               record already carries rides through untouched. The shop sells at
+               one band; the column stays for the day it might not. */
             credit_limit: limit.text
         })
     }
@@ -253,25 +237,6 @@ AppDialog {
                     enabled: dialog.canManage
                     font.family: Tokens.font.family
                     font.pixelSize: Tokens.font.body
-                }
-            }
-
-            Field {
-                Layout.maximumWidth: 240
-                label: Strings.t("customer.price_level", "Price level")
-
-                QC.ComboBox {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: Tokens.size.control
-                    enabled: dialog.canManage
-                    textRole: "label"
-                    model: dialog.levels
-                    currentIndex: dialog.levelIndex(dialog.levelKey)
-                    font.family: Tokens.font.family
-                    font.pixelSize: Tokens.font.body
-                    onActivated: (index) => {
-                        dialog.levelKey = dialog.levels[index].key
-                    }
                 }
             }
         }

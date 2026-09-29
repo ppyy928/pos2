@@ -824,9 +824,16 @@ class Till(QObject):
     # =====================================================================
     @Slot(int)
     def setCustomer(self, customer_id: int) -> None:
+        """Attach (or clear) the customer the sale is for.
+
+        A customer used to change the PRICES on the lines already in the cart —
+        `_reprice()` re-read `product_price(id, level)` for every line the moment
+        a wholesaler's account was attached. The shop prices in one band now (see
+        the note where `_level` used to be), so a customer changes who pays and
+        what they owe, and not what anything costs.
+        """
         if not customer_id:
             self._customer = None
-            self._reprice()
             self.changed.emit()
             return
         database = self._database()
@@ -837,53 +844,28 @@ class Till(QObject):
         except Exception as exc:  # noqa: BLE001
             self._set_error(str(exc))
             return
-        self._reprice()
         self.changed.emit()
 
-    @property
-    def _level(self) -> str:
-        """Which of the three counters this cart is being rung at.
-
-        The customer's own level, and retail for a walk-in. Read from the cart's
-        customer rather than passed in by the screen, because the price has to
-        follow the customer even when the customer is attached AFTER the lines
-        were added — which is the normal order at a counter.
-        """
-        level = (self._customer or {}).get("price_level") or "retail"
-        return level if level in ("retail", "half", "wholesale") else "retail"
-
-    def _reprice(self) -> None:
-        """Re-price the cart for the current customer.
-
-        The whole point of a wholesale price is that nobody has to remember to
-        apply it, and a cashier who scans six items and then attaches the
-        wholesaler would otherwise be charging retail. Lines whose price was typed
-        over by hand are not touched: an override is a decision, and a customer
-        change must not silently undo it.
-        """
-        if not self._items:
-            return
-        database = self._database()
-        if database is None:
-            return
-        level = self._level
-        for item in self._items:
-            if item.get("product_id") is None or item.get("manual_price"):
-                continue
-            try:
-                price = database.product_price(int(item["product_id"]), level)
-            except Exception:  # noqa: BLE001 - a stale line, not a failure
-                # A product deleted while its line sits in the cart: the line keeps
-                # the price it was added at, which is the honest answer and is what
-                # finalize_sale will refuse on if it matters.
-                diagnostics.log.debug(
-                    "reprice: stale cart line product_id=%s",
-                    item.get("product_id"),
-                    exc_info=True,
-                )
-                continue
-            if price > 0:
-                item["price"] = price
+    # =====================================================================
+    # WHAT ONE COSTS — ONE BAND, ON PURPOSE
+    # =====================================================================
+    #
+    # This class used to hold `_level` (the customer's price level: retail, half
+    # or wholesale) and `_reprice()` (which re-read `db.product_price(id, level)`
+    # for every line whenever a customer was attached), and `_add` looked the
+    # tier price up on every add. All three are gone: the shop sells at one band,
+    # the product form no longer offers the other two counters, and a customer's
+    # account carries no level.
+    #
+    # `price_half` and `price_wholesale` remain as COLUMNS and their stored values
+    # ride through every save untouched (see ProductFormDialog's `priceHalf` /
+    # `priceWholesale`) — nothing was migrated and nothing was lost. What left is
+    # the behaviour: a line's price is the product's sale price at the moment it
+    # is added, and a manual override still wins over that, which is the whole of
+    # the pricing rule now.
+    #
+    # `db.product_price()` itself is untouched: it lives in the other project. It
+    # is simply not called with a tier again.
 
     # =====================================================================
     # PAYMENT
@@ -1158,20 +1140,6 @@ class Till(QObject):
                 item["qty"] += unit
                 break
         else:
-            level = self._level
-            if level != "retail" and unit == 1.0 and product_id is not None:
-                database = self._database()
-                if database is not None:
-                    try:
-                        tiered = database.product_price(int(product_id), level)
-                    except Exception:  # noqa: BLE001
-                        diagnostics.log.debug(
-                            "tiered price unavailable: product_id=%s", product_id,
-                            exc_info=True,
-                        )
-                        tiered = 0.0
-                    if tiered > 0:
-                        price = tiered
             self._items.append({
                 "product_id": product_id,
                 "name": name,

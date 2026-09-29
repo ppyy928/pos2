@@ -424,6 +424,115 @@ def main() -> int:
                 bad("the card shape follows the till's setting live", str(exc))
         arrange.close()
 
+    # ---- 1r. retail-only: the form, the margin line, the till ---------
+    form1_path = os.path.join(QML_DIR, "dialogs", "ProductFormDialog.qml")
+    form1_component = QQmlComponent(engine, QUrl.fromLocalFile(form1_path))
+    if form1_component.status() != QQmlComponent.Status.Ready:
+        bad("ProductFormDialog loads", form1_component.errorString())
+    else:
+        pform = form1_component.createObject(win.contentItem(),
+                                             {"context": {}})
+        pform.open()
+        QTest.qWait(500)
+        mo = pform.metaObject()
+
+        def has(prop: str) -> bool:
+            return mo.indexOfProperty(prop) >= 0
+
+        if has("tiersOpen") or has("priceHalf") is False:
+            bad("the wholesale boxes are gone from the form",
+                "tiersOpen still present / priceHalf missing")
+        else:
+            ok("the wholesale boxes are gone from the form")
+
+        # a loaded row keeps its stored tier prices through a fill
+        js(ctx, pform, "fill()")  # no row: a new product
+        QTest.qWait(80)
+        if pform.property("priceHalf") == 0.0 \
+                and pform.property("priceWholesale") == 0.0:
+            ok("a new product carries zeroed tier columns")
+        else:
+            bad("a new product carries zeroed tier columns",
+                f"{pform.property('priceHalf')!r}")
+
+        js(ctx, pform, "row = {purchase_price: 10, sale_price: 20, "
+                       "price_half: 111, price_wholesale: 222}; fill()")
+        QTest.qWait(120)
+        if pform.property("priceHalf") == 111.0 \
+                and pform.property("priceWholesale") == 222.0:
+            ok("a stored tier price rides through the form untouched",
+               "111 / 222 preserved")
+        else:
+            bad("a stored tier price rides through the form untouched",
+                f"{pform.property('priceHalf')!r} / "
+                f"{pform.property('priceWholesale')!r}")
+
+        # the live margin line
+        if pform.property("margin") == 10.0 \
+                and abs(pform.property("marginPct") - 50.0) < 0.01:
+            ok("the margin is computed live from the two prices",
+               pform.property("marginLine"))
+        else:
+            bad("the margin is computed live from the two prices",
+                f"margin={pform.property('margin')!r} "
+                f"pct={pform.property('marginPct')!r}")
+
+        js(ctx, pform, "sale.text = '5'; purchase.text = '10'")
+        QTest.qWait(120)
+        danger = find_named(page, "posNumpad")
+        danger_ink = None
+        for item in items_under(danger) if danger else []:
+            if "Button" in item.metaObject().className() \
+                    and item.property("text") == "C":
+                danger_ink = item.property("background").property("color")
+                break
+        ink = pform.property("marginInk")
+        if pform.property("margin") == -5.0 and danger_ink is not None \
+                and (ink.redF(), ink.greenF(), ink.blueF()) == \
+                (danger_ink.redF(), danger_ink.greenF(), danger_ink.blueF()):
+            ok("a loss-making pair paints the margin danger red")
+        else:
+            bad("a loss-making pair paints the margin danger red",
+                f"margin={pform.property('margin')!r} ink={ink.name()}")
+        pform.close()
+
+    # The till's side of the decision: a wholesale customer changes nothing.
+    customers = bridge.customers
+    wholesale = None
+    if customers is not None:
+        for candidate in customers.rows:
+            row = customers.customer(int(candidate["id"])) or {}
+            if str(row.get("price_level") or "retail") != "retail":
+                wholesale = candidate
+                break
+    till_rows = bridge.pos.catalogue()
+    probe = next((r for r in till_rows
+                  if float(r.get("sale_price") or 0) > 0
+                  and not bool(r.get("track_stock") is False)), None)
+    if probe is None or wholesale is None:
+        ok("retail-only pricing (no tiered customer in the demo to probe)",
+           "skipped")
+    else:
+        bridge.pos.clear()
+        QTest.qWait(100)
+        bridge.pos.add(probe["id"], probe["name"], probe["sale_price"], 1.0)
+        QTest.qWait(200)
+        bridge.pos.setCustomer(int(wholesale["id"]))
+        QTest.qWait(300)
+        lines = as_list(bridge.pos.property("lines"))
+        line_row = next((line for line in lines
+                         if int(line.get("product_id") or 0) == int(probe["id"])),
+                        None)
+        if line_row is not None and abs(float(line_row["price"]) -
+                                        float(probe["sale_price"])) < 0.01:
+            ok("a wholesale customer no longer re-prices the cart",
+               f"{probe['name']} stays at {line_row['price']}")
+        else:
+            bad("a wholesale customer no longer re-prices the cart",
+                f"line={line_row}")
+        bridge.pos.clear()
+        QTest.qWait(100)
+
     # ---- 6. the sidebar labels ----------------------------------------
     labels = []
     if rail is not None:
